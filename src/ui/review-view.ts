@@ -11,6 +11,7 @@ export class OrganizerReviewView extends ItemView {
   getViewType(): string { return REVIEW_VIEW; }
   getDisplayText(): string { return '整理'; }
   getIcon(): string { return 'inbox'; }
+  showCurrent(): void { this.panel?.showCurrent(); }
   async onOpen(): Promise<void> {
     this.contentEl.replaceChildren();
     this.panel = new ReviewPanel(this.contentEl, this.controller, {

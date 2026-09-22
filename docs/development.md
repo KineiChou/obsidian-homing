@@ -23,6 +23,25 @@
 
 ## 验证
 
-Node 22.12+；`npm ci`、`npm run check`。单元测试验证范围、匹配、候选校验和状态转换；集成测试使用内存 vault、延迟 HTTP 和编辑器替身验证完整确认、撤销、竞争与失败流程。真实 Obsidian 的链接更新、CM6 节点与撤销行为另用专用测试 vault 核对，不能把替身测试描述为真实宿主验证。
+Node 22.12+；使用 npm 11 验证 `npx --yes npm@11 ci --ignore-scripts`，再执行 `npm run check`。单元测试验证范围、匹配、候选校验和状态转换；集成测试使用内存 vault、延迟 HTTP 和编辑器替身验证完整确认、撤销、竞争与失败流程。真实 Obsidian 的链接更新、CM6 节点与撤销行为另用专用测试 vault 核对，不能把替身测试描述为真实宿主验证。
 
 构建输出为根目录 `main.js`、`manifest.json`、`styles.css`。不提交凭据、用户笔记或 node_modules。
+
+## UI 参考与当前取舍
+
+- [QuickAdd](https://quickadd.obsidian.guide/docs/)：配置后通过命令快速执行。采用原生命令面板，不抢占用户热键，也不另造导航体系。
+- [Templater 设置](https://silentvoid13.github.io/Templater/settings.html)：按能力和范围配置。常用开关直接可见，排除、目录用途和用量折叠；算法参数保留为工程常量。
+- [Obsidian 设置指南](https://docs.obsidian.md/Plugins/User%20interface/Settings)：采用原生 Setting 与主题变量。当前最低版本使用命令式 display，不使用新版专属声明式 API。
+- [原生反向链接](https://help.obsidian.md/plugins/backlinks)：只插入当前笔记的内部链接，反向关系交给宿主，不改写目标笔记。
+
+面板只展示一个目标；更改时再打开选择器。确认卡片保持高度，背景结果不抢焦点、不切换当前笔记／收件箱模式；未确定位置的笔记放在建议之后的折叠组。浏览器验证使用生产 ReviewPanel 和模拟控制器；真实宿主仍见验证清单。
+
+## 开发命令和交付
+
+- `npm run check`：类型、Lint、领域测试、编辑器／UI／端口集成、生产构建。
+- `npm run package`：构建后复制三个安装文件到 `dist/note-organizer/`。
+- `node --expose-gc benchmarks/metadata-index.mjs`：20,000 篇、每篇两个词条的实际索引；末尾传 `2` 改为每篇三个词条。
+
+自动化测试中 Obsidian 模块映射到测试端口；生产 esbuild 不使用该映射。真实 CM6 与标准 Markdown 解析器参与测试，但不能替代 Obsidian 私有语法和宿主撤销测试。精确依赖版本保存在锁文件。
+
+真实 API 冒烟脚本为 `node scripts/jev-smoke.mjs`，从标准输入接收密钥，只发送固定合成案例。该脚本不会随 `npm test` 或 CI 自动联网，也不会持久化密钥。

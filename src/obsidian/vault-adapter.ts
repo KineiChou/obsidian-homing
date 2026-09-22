@@ -1,7 +1,7 @@
 import { App, TFile, TFolder, getFrontMatterInfo, parseYaml, parseLinktext, parseFrontMatterAliases, parseFrontMatterTags } from 'obsidian';
 import type { MetadataIndex, LinkTarget } from '../linking/types';
 import type { NoteSnapshot, SourceVersion } from '../filing/types';
-import { contentHash, excluded, inInbox, safePath } from '../core/paths';
+import { contentHash, excluded, inInbox, safePath, within } from '../core/paths';
 import { OrganizerError } from '../core/errors';
 import type { OrganizerSettings } from '../settings';
 
@@ -19,6 +19,7 @@ export class VaultAdapter {
   file(path: string): TFile | null { return this.app.vault.getFileByPath(path); }
   id(path: string): number | null { const file = this.file(path); return file ? this.identity(file) : null; }
   currentPath(id: number): string | null { const file = this.files.get(id); return file && this.file(file.path) === file ? file.path : null; }
+  revision(path: string): number | null { const id = this.id(path); return id === null ? null : this.revisions.get(id) ?? 0; }
   allowed(path: string): boolean {
     try { safePath(path); return !excluded(path, this.settings().excludedPaths); } catch { return false; }
   }
@@ -38,6 +39,7 @@ export class VaultAdapter {
     this.index.upsert({ ...value, revision: this.revisions.get(id) ?? 0 });
   }
   remove(file: TFile): void { const id = this.ids.get(file); if (id !== undefined) { this.index.remove(id); this.files.delete(id); this.revisions.delete(id); } }
+  removeUnder(path: string): void { for (const file of this.files.values()) if (within(file.path, path)) this.remove(file); }
   allFolders(): string[] { return this.app.vault.getAllFolders(false).map(folder => folder.path).filter(path => this.allowed(path)); }
   async source(path: string): Promise<SourceVersion | null> {
     const file = this.file(path);
@@ -95,6 +97,7 @@ export class VaultAdapter {
       const after = this.app.metadataCache.getFirstLinkpathDest(targetPath, destination);
       if (before !== after || !before) return false;
     }
+    const uniqueBasename = !this.app.vault.getMarkdownFiles().some(file => file !== source && file.basename === source.basename);
     for (const [inboundPath, targets] of Object.entries(this.app.metadataCache.resolvedLinks)) {
       if (!targets[path] || inboundPath === path) continue;
       const inbound = this.file(inboundPath), metadata = inbound && this.app.metadataCache.getFileCache(inbound);
@@ -102,7 +105,7 @@ export class VaultAdapter {
       for (const link of [...(metadata.links ?? []), ...(metadata.embeds ?? []), ...(metadata.frontmatterLinks ?? [])]) {
         const linkPath = parseLinktext(link.link).path;
         if (this.app.metadataCache.getFirstLinkpathDest(linkPath, inboundPath) !== source) continue;
-        if (linkPath.replace(/\.md$/, '') !== source.basename || this.app.vault.getMarkdownFiles().some(file => file !== source && file.basename === source.basename)) return false;
+        if (linkPath.replace(/\.md$/, '') !== source.basename || !uniqueBasename) return false;
       }
     }
     return true;

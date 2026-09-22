@@ -1,0 +1,14 @@
+{
+  "node": "v22.21.1",
+  "platform": "darwin",
+  "architecture": "arm64",
+  "notes": 20000,
+  "termsPerNote": 2,
+  "windowUtf16": 1200,
+  "queries": 1000,
+  "startupMs": 34.87,
+  "heapDeltaMiB": 30.59,
+  "queryMedianMs": 0.268,
+  "queryP95Ms": 0.35,
+  "bodyReads": 0
+}

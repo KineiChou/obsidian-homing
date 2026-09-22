@@ -4,6 +4,8 @@ import type { FolderCatalog, FolderSnapshot, FolderTarget } from './types';
 
 export class MemoryFolderCatalog implements FolderCatalog {
   private current: FolderSnapshot = { revision: 0, targets: [] };
+  private readonly ids = new Map<string, string>();
+  private nextId = 0;
   refresh(paths: readonly string[], settings: OrganizerSettings): void {
     const rules = new Map(settings.folderRules.map(rule => [rule.path, rule]));
     const targets: FolderTarget[] = [];
@@ -13,7 +15,9 @@ export class MemoryFolderCatalog implements FolderCatalog {
       const rule = rules.get(path);
       if (rule?.acceptsNotes === false) continue;
       const ancestors = [...rules.values()].filter(item => within(path, item.path)).sort((a, b) => a.path.split('/').length - b.path.split('/').length);
-      targets.push({ id: path, path, directPurpose: rule?.purpose ?? '', effectiveRules: ancestors.flatMap(item => [...item.subtreeRules]) });
+      let id = this.ids.get(path);
+      if (!id) { id = 'f' + ++this.nextId; this.ids.set(path, id); }
+      targets.push({ id, path, directPurpose: rule?.purpose ?? '', effectiveRules: ancestors.flatMap(item => [...item.subtreeRules]) });
     }
     if (JSON.stringify(targets) !== JSON.stringify(this.current.targets)) this.current = { revision: this.current.revision + 1, targets };
   }

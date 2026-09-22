@@ -20,9 +20,9 @@ export default class NoteOrganizerPlugin extends Plugin {
     this.register(organizer.subscribe(update)); update();
     this.addCommand({ id: 'open-review', name: '打开整理建议', callback: () => { void this.openReview(); } });
     this.addCommand({ id: 'analyze-note', name: '分析当前收件箱笔记', checkCallback: checking => { const path = this.app.workspace.getActiveFile()?.path; if (!path || !organizer.vault.eligible(path)) return false; if (!checking) { organizer.analyzeNote(path); void this.openReview(); } return true; } });
-    this.addCommand({ id: 'find-links', name: '为当前文字查找链接', callback: () => { void this.openReview().then(() => organizer.findLinks()).catch(error => new Notice(messageFor(error))); } });
+    this.addCommand({ id: 'find-links', name: '为当前文字查找链接', callback: () => { void this.openReview(true).then(() => organizer.findLinks()).catch(error => new Notice(messageFor(error))); } });
     this.addCommand({ id: 'toggle-automatic', name: '暂停或恢复自动分析', callback: () => organizer.setEnabled(!organizer.enabled()) });
   }
-  private async openReview(): Promise<void> { const leaf = this.app.workspace.getLeavesOfType(REVIEW_VIEW)[0] ?? this.app.workspace.getRightLeaf(false); if (!leaf) return; await leaf.setViewState({ type: REVIEW_VIEW, active: true }); await this.app.workspace.revealLeaf(leaf); }
+  private async openReview(current = false): Promise<void> { const leaf = this.app.workspace.getLeavesOfType(REVIEW_VIEW)[0] ?? this.app.workspace.getRightLeaf(false); if (!leaf) return; await leaf.setViewState({ type: REVIEW_VIEW, active: true }); await this.app.workspace.revealLeaf(leaf); if (current && leaf.view instanceof OrganizerReviewView) leaf.view.showCurrent(); }
   onunload(): void { this.organizer?.dispose(); }
 }
