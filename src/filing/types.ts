@@ -38,7 +38,7 @@ export interface MoveHost {
   currentPath(noteId: number): string | null;
   exists(path: string): boolean;
   eligible(path: string): boolean;
-  referencesSafe(path: string): boolean;
+  referencesSafe(path: string, destination: string): boolean;
   rename(from: string, to: string): Promise<void>;
   folders(): FolderSnapshot;
   settingsRevision(): number;
