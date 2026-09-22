@@ -1,6 +1,7 @@
 import { StateField } from '@codemirror/state';
 import { vi } from 'vitest';
 import type { MarkdownFileInfo } from 'obsidian';
+export { Setting, SecretComponent, PluginSettingTab, Modal, FuzzySuggestModal } from './settings';
 
 export const editorInfoField = StateField.define<MarkdownFileInfo>({ create: () => ({ file: null }) as MarkdownFileInfo, update: value => value });
 export const requestUrl = vi.fn();
