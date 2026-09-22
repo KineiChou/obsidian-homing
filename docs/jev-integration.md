@@ -8,7 +8,7 @@
 
 最小请求仅包含一个目录 Choice。文件存在性、路径匹配、候选数量、内容变化、确认状态和移动权限全部由插件判断。
 
-建议直接用 Obsidian 的网络请求能力接入 HTTP API，先避免引入运行时或额外后台服务。是否采用官方 JavaScript SDK，取决于实际打包和运行环境验证，不需要先建设通用多模型框架。
+接入选用 Obsidian 的 `requestUrl`，通过薄客户端直接请求 HTTP API，首版不引入官方 SDK。模型调用、请求调度和响应校验分别实现；TypeScript 契约与取消语义见 [技术设计](technical-design.md)。
 
 ## 请求示例
 
@@ -110,11 +110,11 @@ Jev 不生成自由文本。解释界面使用用户提供的目录用途和本�
 - 在 workspace 就绪后注册新建事件，再单独检查既有 inbox 内容，避免启动加载被当作新到笔记。[插件启动说明](https://docs.obsidian.md/plugins/guides/load-time)
 - 监听移动和目录改名；元数据更新不能代替路径事件。所有事件和定时器随插件卸载释放。[事件生命周期](https://docs.obsidian.md/Plugins/Events)
 - 移动及撤销使用 `FileManager.renameFile`，并验证其在目标版本和链接设置下的效果。
-- 建议采用官方 `SecretStorage` 保存凭据；公开类型定义标记其自 1.11.4 起可用。最低版本必须与实际选用的接口相符，不能默默回退到同步配置中的明文密钥。[官方类型定义](https://github.com/obsidianmd/obsidian-api/blob/master/obsidian.d.ts)
+- 采用 `SecretComponent` 选择凭据名称，通过 `app.secretStorage.getSecret()` 读取；插件配置只保存名称。设计最低 Obsidian 版本为 1.11.4，与所用 SecretStorage 接口一致；发布前仍须在该版本实测。[官方密钥接入指南](https://docs.obsidian.md/plugins/guides/secret-storage)
 
 ## 请求与数据控制
 
-默认串行，提供请求超时、暂停和手动重试；限流与短暂服务错误采用有上限的退避，遵守服务的重试提示。认证失败不自动重试。取消任务后仍可能收到响应，必须通过请求标识丢弃过期结果。
+默认串行，提供逻辑等待超时、暂停和手动重试；限流与短暂服务错误采用有上限的退避，遵守服务的重试提示。认证失败不自动重试。`requestUrl` 的公开参数没有 `AbortSignal` 或传输超时：逻辑超时／取消仅令任务失效，底层请求仍可能完成并计费。调度器继续占用在途名额，直到请求真正结束，不通过 `Promise.race` 提前释放名额后重复发送。请求长期未结束时暂停后续发送并显示网络状态；不能声称已中止传输。
 
 归档分析只发送当前笔记与候选目录信息，不递归展开 wikilink 指向的其他笔记，不上传附件。前置属性采用明确的发送名单，例如 tags；未知自定义属性不整体透传。
 
