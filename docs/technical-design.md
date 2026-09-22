@@ -1,333 +1,94 @@
-# Note Organizer 技术栈与接口设计
+# 技术栈与模块接口
 
-状态：待实现的技术方案，接口示例用于说明契约，不代表已有插件实现。官方接口核查于 2026-09-22。功能范围以 [产品需求](../PRD-note-organizer.md) 为准。
+状态：0.1.0 开发预览已实现。本文描述当前代码；测试和宿主验证边界见 [验证记录](validation.md)。官方接口核查于 2026-09-22。
 
-## 分类模型与整体边界
+## 技术栈
 
-目录分类采用“混合深度的实际目标 → 组内提名 → 统一决选”。两阶段指模型调用顺序，不是先选叶子再向父目录回溯。父目录只要允许直接存放笔记，就与子目录一样是一个实际目标。容量允许时省去提名，直接比较全部目标。
+| 层次 | 当前选择 |
+| --- | --- |
+| 语言与构建 | TypeScript 5.9.3，strict、noUncheckedIndexedAccess；esbuild 0.25.12，CommonJS / ES2021 |
+| 宿主 | Obsidian 1.11.4+，桌面端；原生 Plugin、ItemView、PluginSettingTab、Setting、FuzzySuggestModal |
+| 编辑器 | CM6 state 6.5.0 / view 6.38.6，与 Obsidian 类型包的 peer 要求一致；language 与 Lezer |
+| 界面 | 原生 DOM、Obsidian CSS 变量；没有前端框架或额外图标运行时 |
+| Jev | requestUrl → TypeSafe System One Choice；固定 jev-1.13.0 |
+| 索引 | 标题／aliases 压缩前缀树、有限元数据；仅内存 |
+| 状态 | loadData/saveData 保存设置、待办路径和移动记录；本机 local storage 保存自动开关和用量 |
+| 凭据 | SecretComponent / SecretStorage；只保存密钥名称 |
+| 验证 | Vitest 4.1.11、真实 CM6 与 Markdown 解析器、jsdom；ESLint 9 + typescript-eslint；tsc |
 
-插件运行在 Obsidian 桌面宿主内，本地负责监听、候选检索、校验和用户交互，TypeSafe 提供远程 Jev 推理。Node.js 用于开发构建和测试；最终用户运行插件不需要额外启动 Node 服务。
+Node.js 仅用于开发，不要求最终用户运行后台服务。`obsidian`、`@codemirror/*`、`@lezer/*` 由宿主提供，构建为 external，避免重复编辑器实例。[官方模板](https://github.com/obsidianmd/obsidian-sample-plugin/blob/master/esbuild.config.mjs)
+
+最低版本决定使用命令式 Setting 界面；没有采用新版本专属的声明式设置 API。当前没有启用 peer 依赖不兼容的 `eslint-plugin-obsidianmd`，本地 ESLint 限制 any、innerHTML 和 Node 文件系统导入。[Obsidian API](https://github.com/obsidianmd/obsidian-api/blob/master/obsidian.d.ts)
+
+## 依赖与职责
 
 ```mermaid
 flowchart LR
-    A[目录与文件事件] --> B[目录缓存与 inbox 队列]
-    B --> C[目录分类服务]
-    D[编辑器局部变化] --> E[标题与别名索引]
-    E --> F[链接推荐服务]
-    C --> G[共享请求调度与 Jev 客户端]
-    F --> G
-    G --> H[待确认建议]
-    H --> I[用户确认与版本校验]
-    I --> J[文件移动服务]
-    I --> K[编辑器链接插入]
+    Host[Obsidian 事件与编辑器] --> Controller[宿主协调器]
+    Controller --> Queue[收件箱队列]
+    Queue --> Classifier[目录分类器]
+    Controller --> Index[元数据索引与提及匹配]
+    Index --> Recommender[链接推荐器]
+    Classifier --> Scheduler[共享调度器]
+    Recommender --> Scheduler
+    Scheduler --> Jev[Jev 客户端]
+    Controller --> UI[原生设置与整理面板]
+    UI --> Confirm[已展示计划的用户确认]
+    Confirm --> Move[移动服务]
+    Confirm --> Link[链接插入服务]
 ```
 
-模型输出只指向本次提供的候选 ID。Jev 客户端不持有移动、写入笔记或修改编辑器的能力；文件变更由用户确认入口调用。
+纯领域模块不依赖 Obsidian、DOM 或磁盘。模型模块只返回候选选择，不持有写入能力。宿主协调器通过 port 注入实际读写，UI 仅调用准备和确认命令。
 
-## 技术栈选择
-
-| 层次 | 选择 | 作用与边界 |
+| 模块 | 接口定义 | 实现职责 |
 | --- | --- | --- |
-| 语言 | TypeScript，开启 `strict`、`noUncheckedIndexedAccess` | 空缓存、缺失目标、失效任务通过类型和运行时校验处理 |
-| 开发环境 | Node.js 22.21.1、npm、`package-lock.json` | 与现有实验环境一致；依赖锁定后用 `npm ci` 复现 |
-| 构建 | esbuild，入口 `src/main.ts`，CommonJS 输出，ES2021 目标 | 生成宿主可加载的 `main.js`；生产关闭内联源码映射 |
-| 宿主 API | 官方 `obsidian` 类型与运行时 API | 目录、元数据、编辑器、设置、文件移动 |
-| UI | `PluginSettingTab`、`Setting`、`ItemView`、选择弹窗、原生 DOM 与 CSS | 跟随 Obsidian 主题，界面状态只覆盖当前插件 |
-| 编辑集成 | CodeMirror 6 的 view/state/language API | 捕获变化区间、复用语法树、识别输入法状态 |
-| 分类服务 | Jev HTTP API，经 `requestUrl` 接入 | 单个提供方的薄客户端，校验 Choice 输出 |
-| 索引 | 自有 TypeScript 压缩前缀树及有限元数据映射 | 标题／别名到现有笔记；只驻留内存 |
-| 持久化 | `loadData/saveData`；本机开关用 vault 范围的 local storage | 设置、待办引用和有限移动记录；不存笔记正文或索引 |
-| 凭据 | `SecretComponent` + `SecretStorage` | 配置保存密钥名称，发送请求时才取值 |
-| 开发验证 | `tsc --noEmit`、ESLint 与 Obsidian 规则、Vitest、独立测试 vault | 纯逻辑与异步竞态做自动验证，宿主行为另做集成验证 |
-
-构建形式与官方模板一致；`obsidian`、CodeMirror 和宿主提供的 Lezer 模块列为 external，由宿主提供实例，避免打包第二套编辑器运行时。具体 npm 版本在脚手架阶段锁定，类型包新于最低宿主版本时仍须核对所用成员的兼容性。[官方构建示例](https://github.com/obsidianmd/obsidian-sample-plugin/blob/master/esbuild.config.mjs)、[开发依赖示例](https://github.com/obsidianmd/obsidian-sample-plugin/blob/master/package.json)
-
-设计基线为 `minAppVersion: 1.11.4`、`isDesktopOnly: true`，编辑扩展针对 CM6 源码模式与实时预览。原生密钥接口决定当前最低版本；这仍是需要实测的兼容性承诺。[官方 API 类型](https://github.com/obsidianmd/obsidian-api/blob/master/obsidian.d.ts)
-
-Vitest 只作开发依赖，其工具链不进入插件包；当前指南要求 Node 至少 22.12.0，上述环境满足该条件。[Vitest 指南](https://vitest.dev/guide/)
-
-## 模块与代码组织
-
-```text
-src/
-  main.ts                         # 注册生命周期并连接模块
-  settings.ts                     # 配置结构、默认值与迁移
-  folders/catalog.ts              # 实际归档目标及快照版本
-  filing/inbox-queue.ts            # 稳定等待、去重、待办状态
-  filing/classifier.ts             # 全量比较或提名后决选
-  linking/metadata-index.ts        # 有界元数据与词条到目标关联
-  linking/mention-matcher.ts       # 原文范围匹配与候选过滤
-  linking/recommender.ts           # 链接问题构造与结果转译
-  obsidian/vault-events.ts         # 宿主事件到目录／笔记更新
-  obsidian/editor-extension.ts     # 编辑会话、脏区间、局部语法
-  obsidian/move-service.ts         # 确认移动、恢复核对与撤销
-  obsidian/link-writer.ts          # 生成链接、校验并插入
-  jev/client.ts                    # HTTP 与凭据读取
-  jev/response-parser.ts           # unknown 到已验证响应
-  jev/scheduler.ts                 # 在途名额、预算、重试与失效
-  storage/state-store.ts           # 持久化写入串行化
-  ui/settings-tab.ts
-  ui/review-view.ts
-  ui/target-picker.ts
-```
-
-上述是职责划分，不要求一开始创建空模块。按功能落地文件；类型放在所属领域，只有跨模块使用的契约才导出。算法与问题构造使用普通数据对象，不依赖 `App`、`TFile` 或 DOM；宿主对象留在接入与写入模块，通过构造参数注入少量协作者即可。
-
-`main.ts` 不实现分类、全文解析或文件移动。UI 发出明确的分析、准备预览和确认命令，通过订阅获得状态；不直接调用 Jev 或绕过变更校验。
-
-## Obsidian 接入点
-
-| 用途 | API 或事件 | 处理要点 |
-| --- | --- | --- |
-| 初始化 | `workspace.onLayoutReady`、`Plugin.registerEvent` | 就绪后订阅事件；既有 inbox 走单独入口；卸载自动释放订阅 |
-| 目录发现 | `vault.getAllFolders(false)` | 读取宿主已有目录集合；完整路径区分同名目录 |
-| 文件变化 | `vault.on('create'/'modify'/'rename'/'delete')` | 只更新受影响范围；整体目录改名要处理子树 |
-| 链接元数据 | `getMarkdownFiles()`、`metadataCache.getFileCache()` | 分批建索引；空缓存等待后续事件 |
-| 元数据就绪 | `metadataCache.on('changed'/'resolve')` | 有限字段变化才更新相应索引；改名另处理 |
-| 当前正文 | 活动编辑器内容；后台笔记使用 Vault 读取接口 | 归档稳定后取快照；编辑推荐只读局部未保存文本 |
-| 编辑扩展 | `registerEditorExtension`、`editorInfoField` | 从所在编辑器获取文件和 Editor，避免依赖未公开的 `.cm` 属性 |
-| 移动 | `fileManager.renameFile` | 遵循宿主链接设置，确认前检查目标与内容 |
-| 生成链接 | `fileManager.generateMarkdownLink` | 传入目标、源路径和显示文字，遵循用户链接格式 |
-| 插入链接 | `Editor.transaction` | 只替换已确认范围，使用编辑器撤销历史 |
-
-宿主 API 的使用以官方类型为准；元数据与文件路径事件承担不同职责，不能用一个事件覆盖两者。[官方 API](https://github.com/obsidianmd/obsidian-api/blob/master/obsidian.d.ts)
-
-## 数据契约
-
-目录 ID 与笔记 ID 是当前插件会话中的标识。路径不是稳定身份，改名后要更新映射；重启后从持久化路径与内容指纹重新核对，不能复用上次会话的数字 ID。目录快照包含所有当前允许的实际目标，关闭直接归档的容器在构造快照时过滤。
-
-```typescript
-type NoteId = number;
-type FolderId = string;
-
-interface SourceVersion {
-  readonly noteId: NoteId;
-  readonly path: string;
-  readonly revision: number;
-  readonly contentHash: string;
-}
-
-interface NoteSnapshot {
-  readonly source: SourceVersion;
-  readonly title: string;
-  readonly body: string;
-  readonly tags: readonly string[];
-}
-
-interface FolderTarget {
-  readonly id: FolderId;
-  readonly path: string;
-  readonly directPurpose: string;
-  readonly effectiveRules: readonly string[];
-}
-
-interface FolderSnapshot {
-  readonly revision: number;
-  readonly targets: readonly FolderTarget[];
-}
-
-interface DecisionContext {
-  readonly taskId: string;
-  readonly settingsRevision: number;
-  readonly promptRevision: number;
-  readonly modelId: string;
-}
-
-interface FilingProposal {
-  readonly id: string;
-  readonly source: SourceVersion;
-  readonly foldersRevision: number;
-  readonly context: DecisionContext;
-  readonly selected: FolderId | null;
-  readonly ranked: readonly {
-    readonly targetId: FolderId;
-    readonly probability: number;
-  }[];
-}
-
-interface FolderClassifier {
-  propose(
-    note: NoteSnapshot,
-    folders: FolderSnapshot,
-    context: DecisionContext
-  ): Promise<FilingProposal>;
-}
-```
-
-`selected: null` 表示模型放弃，不表示网络失败。失败走明确的错误结果，不伪造成功建议。原始 Choice 概率包含放弃项；上面的 `ranked` 仅是展示用的真实目录排序，不要求这些概率之和等于 1。
-
-原文件完整文本只在本次归档任务内存中短暂保留；`contentHash` 覆盖包括 frontmatter 在内的完整内容，建议使用 SHA-256，仅在稳定分析和确认阶段计算。发给模型的 `body` 移除 frontmatter，额外属性从同一文本快照中按发送名单提取；归档不能用可能滞后的元数据缓存拼出另一版本的属性，也不能把未知属性随正文一起透传。变化计数用于快速失效，不能代替确认时的内容检查。标识与 TypeScript 类型也不能代替路径存在性和候选白名单校验。
-
-### 链接建议的契约
-
-```typescript
-interface TextAnchor {
-  readonly editorSessionId: string;
-  readonly noteId: NoteId;
-  readonly sourcePath: string;
-  readonly documentRevision: number;
-  readonly from: number;
-  readonly to: number;
-  readonly originalText: string;
-  readonly contextFrom: number;
-  readonly contextText: string;
-}
-
-interface LinkTarget {
-  readonly noteId: NoteId;
-  readonly path: string;
-  readonly title: string;
-  readonly aliases: readonly string[];
-  readonly tags: readonly string[];
-  readonly description: string;
-  readonly revision: number;
-}
-
-interface LinkInput {
-  readonly anchor: TextAnchor;
-  readonly catalogueEpoch: number;
-  readonly candidates: readonly LinkTarget[];
-}
-
-interface LinkProposal {
-  readonly id: string;
-  readonly input: LinkInput;
-  readonly context: DecisionContext;
-  readonly selected: NoteId | null;
-}
-
-interface LinkRecommender {
-  propose(
-    inputs: readonly LinkInput[],
-    context: DecisionContext
-  ): Promise<readonly LinkProposal[]>;
-}
-```
-
-`from/to` 是原编辑器文档的 UTF-16 绝对偏移，`to` 不包含在范围内，不能用归一化字符串的下标替换。会话区分同一文件的多个编辑窗格；侧栏点击后仍操作绑定的源会话，不能临时寻找“当前活动编辑器”而写错窗格。
-
-首版采取保守策略：源文档任何正文变化即使该会话旧建议失效。变化区间映射只用于下一次局部分析，不用于强行保留已失效的插入指令。目标改名、删除、描述变化，词典成员变化及配置变化也使相关建议失效。
-
-## Jev 客户端与调度接口
-
-客户端只实现当前需要的 Choice 子集。问题 ID、选项 ID 在本地映射到业务对象；完整路径与用途放在选项描述里。核心接口如下，`unknown` 是接入边界，必须先做运行时校验。
-
-```typescript
-type JsonValue = null | boolean | number | string
-  | readonly JsonValue[] | { readonly [key: string]: JsonValue };
-
-interface ChoiceQuestion {
-  readonly id: string;
-  readonly instructions: string;
-  readonly options: readonly {
-    readonly id: string;
-    readonly description: string | { readonly [key: string]: JsonValue };
-  }[];
-}
-
-interface ChoiceBatch {
-  readonly modelId: string;
-  readonly state: JsonValue;
-  readonly questions: readonly ChoiceQuestion[];
-}
-
-interface ChoiceBatchResult {
-  readonly modelId: string;
-  readonly answers: Readonly<Record<string, {
-    readonly selected: string;
-    readonly probabilities: Readonly<Record<string, number>>;
-    readonly confidence: number;
-  }>>;
-  readonly inputTokens: number | null;
-}
-
-interface DecisionClient {
-  evaluate(batch: ChoiceBatch): Promise<ChoiceBatchResult>;
-}
-```
-
-`ChoiceBatch` 是内部 DTO，客户端转换为 API 的 `state/model/questions` 结构，不直接把这个对象发给服务端。响应通过窄范围校验函数转译：问题集合、选项集合、返回类型、数值有限性、概率范围与总和、实际模型版本和用量类型都要检查。`inputTokens: null` 表示用量未知，不记为免费。HTTP 与 Choice 细节见 [Jev 接入设计](jev-integration.md)。[TypeSafe API](https://docs.typesafe.ai/api)
-
-共享调度器使用一个实际在途 HTTP 名额；已排队的同一编辑会话只保留最新任务。用户手动操作与编辑推荐优先，归档在批次之间让出调度权；正在传输的请求不会被抢占。自动请求开始间隔至少 5 秒，日常预算与重试预算一起计数。每个目录分类任务可含多个批次，不能把“一个任务”计成“一次请求”。
-
-`requestUrl({ throw: false, ... })` 返回后统一处理状态。401／403 停止自动重试；422 作为请求不合法处理；429、529 与可重试服务错误按上限退避并尊重 `Retry-After`。错误界面展示可采取的操作，不输出可能含正文的原始错误体。[requestUrl](https://docs.obsidian.md/Reference/TypeScript%20API/requestUrl)
-
-公开 `RequestUrlParam` 没有取消或超时参数。因此任务取消和等待超时只改变应用状态：丢弃结果、取消尚未发送的批次，实际在途名额直到原请求 settle 才释放。长期挂起时保持网络暂停，不用无限重发绕过名额，也不承诺卸载插件能取消已经发送的请求。这一约束需进入假定时器与延迟响应测试。
-
-## 两条事件流程
-
-### inbox 归档
-
-1. Vault 事件检查边界与扩展名，符合范围的笔记进入队列；已有 inbox 内容由单独命令加入。
-2. 内容稳定约 10 秒，且笔记未处于活动编辑状态时读取当前正文；手动分析活动笔记则使用编辑器中的最新文本。
-3. 记录源指纹、目录快照和配置版本，分类器选择全量比较或分组提名／统一决选。
-4. 任一版本变化使整个任务失效。结果进入安静的建议列表，默认只展示一个推荐；人工改选可使用全部有效目标，不局限于模型提名集合。
-5. UI 根据源与所选目标生成具体移动预览，确认调用只携带该预览 ID。源内容或路径变化、目标变化后，旧预览不可继续执行。
-6. 移动服务重新校验、持久化操作意图、调用 `renameFile`，随后写入结果与撤销记录。任一阶段不明确时进入待核对，不自动重复移动。
-
-### 编辑时推荐链接
-
-1. 用 `ViewPlugin` 接收 `docChanged` 与 `changes.iterChangedRanges`，递增会话版本、使旧建议失效、映射并合并最多 8 个脏区间。
-2. 输入法 composition 结束且停顿约 1 秒后，通过 `state.doc.sliceString()` 读取最多 1,200 UTF-16 单元的局部窗口，补边也计入预算。
-3. 用已有语法树检查允许区域。解析尚未覆盖窗口时延后或跳过；Obsidian 的自定义节点在目标版本中验证，不能只靠标准 Markdown 节点名推断安全。未知结构保守跳过。
-4. 压缩前缀树匹配标题／别名，由词条直接取得目标；最多分析 3 处提及，每处默认 8 个候选、上限 20。没有候选则不请求模型。
-5. 先查内存缓存，再由 Jev 选择目标或放弃。新输入、文件切换或目标变化后丢弃过期结果。
-6. 用户确认时检查会话、文档版本、原文、语法区域、目标与重复链接；生成链接并验证能解析到预期目标。预览格式发生变化则先刷新预览。
-7. 用一次 `Editor.transaction` 替换原文范围；正常撤销恢复文本。首版不通过后台整文件写入实现补链。
-
-变化集合提供局部范围，而非要求复制全文；其使用方式可由 CodeMirror 的公开实现核对。[ViewUpdate](https://github.com/codemirror/view/blob/main/src/extension.ts)。编辑写入遵循宿主 Editor API，实际撤销分组还需在目标版本集成验证。[Editor](https://docs.obsidian.md/Plugins/Editor/Editor)
-
-所有编辑窗格共享一个知识库索引，各自维护编辑会话。`ViewPlugin.destroy` 清除计时器、解除会话绑定并使建议失效；插件卸载停止调度和增量工作，释放事件、UI 订阅与缓存。
-
-## 变更接口与失败状态
-
-变更服务遵循“准备可展示计划 → 用户确认计划 ID → 执行前再次校验”。计划只在当前会话有效，不接受模型直接返回的文件路径或编辑指令。
-
-| 命令 | 输入 | 输出与约束 |
-| --- | --- | --- |
-| `prepareMove` | 源笔记身份、当前允许的目标目录 ID | 带源指纹、最终文件路径与快照版本的只读预览 |
-| `confirmMove` | UI 当前展示的计划 ID | 已完成、失效、同名冲突、失败或需核对 |
-| `undoMove` | 已完成移动记录 ID | 只反向移动当前文件；保留最新正文并重新检查冲突 |
-| `prepareLink` | 建议 ID、候选目标 ID | 锚点、完整目标和实际替换文本组成的预览 |
-| `confirmLink` | UI 当前展示的计划 ID | 已插入、失效、目标消失或格式无法安全表达 |
-
-同一源笔记的移动串行执行，重复确认不能执行两次。保存意图失败则不移动；文件已移动但完成记录写入失败时标记待核对，不能把它当作未移动重试。不同文件之间的移动和链接更新不是插件拥有的数据库事务，不能宣称与外部编辑器或同步进程之间存在原子锁；发布前验证冲突与中断行为。
-
-## 存储与配置
-
-`data.json` 分为 `schemaVersion`、`settings`、`filingQueue`、`moveJournal`。仅保存必要字段：inbox 路径与子目录开关、排除范围、目录用途、功能开关、密钥名称、固定模型标识、预算、待办路径及状态、源指纹与移动路径。完整正文、请求包、词条索引、编辑建议、会话忽略记录与候选摘录只在内存中。用户看见的开关与内部配置一一对应到明确功能；“启用归档建议”同时完成本机运行授权，不再要求额外打开第二个总开关。
-
-配置加载先校验再迁移；损坏文件不直接用默认配置覆盖。单一状态存储模块串行执行 `saveData`，合并普通设置与队列更新。移动意图与结果单独立即保存并等待完成，不被普通防抖延后。编辑按键和链接查询不调用 `saveData`。
-
-本机是否承担自动分析由 `app.loadLocalStorage/saveLocalStorage` 保存的 vault 范围开关控制，首次默认关闭，避免另一设备仅同步插件配置就自动开始调用。这不构成跨设备锁，首版仍按单设备运行设计。
-
-本机每日额度也放在 vault 范围的 local storage，由共享调度器通过状态存储模块串行更新。发送前先保守占用额度，实际响应补充用量；意外退出后不能确认是否发出的占用记录保留为未知，不当作免费请求。每次实际网络尝试只涉及少量计数写入，键入和本地检索不写入。全局“完全不处理”范围优先于两个功能的各自范围，源文件被排除时不构造请求，目标被排除时不进入候选。
-
-重启恢复待办路径与操作记录，未完成移动先核对；编辑会话与插入计划全部失效，未保存的模型建议也不复用。待办中需要重新分析的条目明确显示状态，由用户重试，避免恢复时重复批量调用。已完成的撤销记录设置容量限制，未核对意图不参与普通清理。
-
-凭据从 `SecretComponent` 选择，设置只记录名称，`app.secretStorage.getSecret(name)` 在请求前取值；缺失时显示配置入口。这是 Obsidian 的 vault 范围密钥存储，不额外宣称操作系统钥匙串加密或插件间权限隔离。[密钥指南](https://docs.obsidian.md/plugins/guides/secret-storage)
-
-## 界面实现
-
-- 设置页：首次只需 inbox 与凭据，同页说明发送范围后启用归档建议。日常展示归档和写作建议开关；范围、用途与用量折叠。写作建议默认手动查找，用户单独开启自动准备。分组大小、候选数与分数阈值作为工程参数，不进入常规设置。
-- 侧栏 `ItemView`：用户主动打开；“当前笔记”与“收件箱”两个范围只显示一个。每条一个推荐、一个主要确认动作、更换目标和更多菜单；关闭即稍后，成功原位反馈，列表不因新结果自动重排或抢焦点。
-- 目标选择：目录使用支持完整路径搜索的选择弹窗；文件目标使用候选列表。人工选择遵循对应功能的范围限制。
-- 状态栏：单一“整理”入口，有可用建议时用中性圆点提示，默认不显示累积数字。连接或预算阻碍只更新入口状态，细节主动查看；没有新建议时不显示后台转圈。支持命令面板和用户自定快捷键，不自动劫持 Enter／Tab。
-- DOM 使用文本节点或宿主安全渲染能力；路径和笔记内容不经 `innerHTML` 拼接。样式使用插件类名前缀和 Obsidian CSS 变量，组件使用自身文档对象以兼容弹出窗口。
-
-详细显隐、默认值、忽略和异常反馈以 [低打扰交互](interaction-design.md) 为准。上下文仍显示旧结果时不得原位换成新目标并保留可点击的旧确认动作，计划版本与 UI 焦点必须一起处理。
-
-## 资源预算与发布验证
-
-首版在宿主主线程分片构建与更新索引：每批最多约 250 篇且约 4 ms 后让出执行权。先遵守既定的窗口、词条、命中数和内存上限；实测超预算再判断是否需要 Worker，不预先复制一套索引到第二线程。详细预算与合成实验见 [轻量索引](link-indexing.md)。
-
-构建后交付 `main.js`、`manifest.json`、`styles.css`，版本与最低宿主版本由 manifest 和 versions 文件维护。源码在独立仓库开发，测试构建只放入专用 vault；正常构建步骤不写入真实知识库。[官方插件模板](https://github.com/obsidianmd/obsidian-sample-plugin)
-
-拟定开发命令为 `dev`、`build`、`typecheck`、`lint`、`test`。当前文档仓库尚未创建这些脚本。验证只覆盖与实际改动相关的风险：
-
-- 纯逻辑：目录边界、提名覆盖、非法模型选项、别名重叠、UTF-16 原文位置、索引增删与容量边界。
-- 异步：假定时器验证防抖、输入法延迟、旧响应、真实在途名额、分组失败、重试计费与保存次序。
-- 宿主：中文输入法、分屏／弹出窗格、源模式／实时预览、重命名、同名冲突、链接格式、正常撤销、插件卸载和中断恢复。
-- 质量：在用户允许发送的人工标注样本上评估分类与链接召回；合成匹配性能或 mock 请求不能证明 Jev 的真实判断质量。
-
-新接口与依赖只在完成上述相关验证后形成已实现的兼容性承诺。
+| folders | [types.ts](../src/folders/types.ts) | MemoryFolderCatalog：完整路径、范围、容器、继承说明、快照版本 |
+| filing | [types.ts](../src/filing/types.ts) | StableInboxQueue、MixedDepthClassifier、ConfirmedMoveService |
+| linking | [types.ts](../src/linking/types.ts) | MemoryMetadataIndex、LocalMentionMatcher、JevLinkRecommender、ConfirmedLinkService |
+| jev | [types.ts](../src/jev/types.ts) | JevClient、响应校验、SharedDecisionScheduler、体积预算 |
+| storage | [types.ts](../src/storage/types.ts) | PluginStateStore：串行持久化、移动日志、本机用量 |
+| ui | [types.ts](../src/ui/types.ts) | OrganizerController、ReviewPanel、ItemView、设置和选择器 |
+| obsidian | [controller.ts](../src/obsidian/controller.ts) | VaultAdapter、EditorSessions、公开 API 接入与生命周期 |
+
+接口以链接到的 TypeScript 文件为准，文档不另维护一份可能漂移的声明。`saveSettings` 接收部分配置，串行合并到最新设置；失败不会覆盖有效状态。
+
+## 归档流程
+
+1. 订阅 create/modify/rename/delete，依路径边界判断 inbox。既有笔记仅在主动分析时入队。
+2. 内容稳定 10 秒并且未处于活动编辑状态时分析。手动分析可读活动编辑器最新文本；执行移动必须与已保存内容一致。
+3. 快照包含会话笔记身份、路径、变化版本和完整文本 SHA-256。发送正文去除 frontmatter，仅单独提取最多 8 个 tags。
+4. 可直接存笔记的父目录、叶目录、空目录平等参与。最多 254 个实际目标直接比较，否则每组最多 64 个、每组提名 3 个，最多 64 组，再统一决选。不能跨组比较概率。
+5. UI 展示最终路径；确认前核对来源、配置、目录版本、覆盖冲突和引用。先等待意图持久化，再调用 FileManager.renameFile，最后持久化结果。
+6. 同一计划单次使用，同一笔记串行。保存意图失败不移动，移动后记账失败转为核对。撤销反向移动当前文件，保留最新正文。
+
+目录 ID 是会话内短标识 `f1` 等，完整路径只出现在描述中。笔记 ID 由会话内 TFile 身份映射得到；不将上次会话数字 ID 当作持久身份。
+
+Obsidian 公开 API 没有自动更新链接设置的 getter。当前实现只允许可证明保持解析的引用：检查出链在新位置的解析结果，入链仅允许唯一裸文件名等安全情况。显式旧路径、同名歧义或缓存未就绪时拒绝移动，可能比宿主实际能力更保守。重启后旧完成记录也转为核对，跨会话自动撤销暂未实现。
+
+## 编辑与链接流程
+
+1. 通过 registerEditorExtension / editorInfoField 绑定文件与 Editor；不访问未公开的 `.cm`。各编辑会话维护版本、最多 8 个变化范围与有限忽略记录。
+2. 按键仅更新内存版本和计时器、使旧建议失效，不执行检索、磁盘持久化或全文复制。停顿 1 秒并结束 composition 后读取最多 1,200 UTF-16 单元窗口。
+3. 复用 syntaxTree；解析未覆盖窗口就跳过。排除 code/math/link/url/image/frontmatter/yaml/html/comment/footnote 节点及局部链接标记。带 frontmatter 的笔记另读开头最多 1,200 单元作保护；其中未发现闭合标记时，整篇暂停补链。
+4. 标题及 aliases 词条精确匹配，ASCII 大小写折叠，使用原始 UTF-16 偏移与字素边界。每次最多 128 次命中，同名目标超过 128 个跳过。每次最多 3 处建议，每处默认 8 个候选；截断处仍并列时跳过，不按路径猜选。
+5. 周边上下文限定在锚点所在的允许文本范围；排除区中的内容不会因附近有匹配而附带发送。Jev 选择本次候选或放弃，纯内存缓存有界。
+6. 确认时核对会话、原文、版本、语法、候选、目标解析、重复链接与格式偏好；重新生成的链接与预览不一致就失效。只有此时可额外扫描当前编辑器全文检查尚未保存的链接。
+7. 通过一次 Editor.transaction 插入；普通撤销恢复原文。忽略随编辑映射，当前会话保留；手动重新查找可恢复。插入被撤销后抑制同位置自动推荐。
+
+自动路径不读取候选正文、不 grep 全库、不建立持久索引。启动按 250 篇／4 ms 分批索引元数据；单文件更新做词条差量，目录改名与删除处理子树。保存事件会更新待办状态，不能把整个联网和保存流程描述为零写入。
+
+语法排除已通过标准 Markdown 与 CM6 测试；Obsidian 的自定义语法、输入法和实际撤销历史仍需宿主测试，不能将节点名启发式当成完整的兼容性证明。
+
+## 网络、预算与状态
+
+Choice 最多 255 项，包含放弃项。内部 DTO 转换为 `state/model/questions`；响应验证模型、问题和选项集合、概率、confidence、usage。来源文本和候选描述始终当作资料，不赋予操作权限。[Choice](https://docs.typesafe.ai/primitives/choice)、[API](https://docs.typesafe.ai/api)
+
+保守本地体积限制为状态加最大问题 30,000 UTF-8 字节、请求 60,000 字节，不声称是精确 token 计数。超限明确失败，不悄悄截断笔记。
+
+共享调度器最多一个实际在途请求。手动任务、链接、后台归档依次优先，自动请求开始至少相隔 5 秒。401/403 暂停；429/5xx 有限重试并尊重 Retry-After，重试占用预算。请求逻辑取消或超时不会释放实际名额；requestUrl 没有公开的 AbortSignal，必须等传输结束。[requestUrl](https://docs.obsidian.md/Reference/TypeScript%20API/requestUrl)
+
+每日额度发送前预留，返回后记录 token；超时、取消或退出导致无法确认的用量保留为未知。统计仅代表本机本插件，不能推导账户总账单。默认 100 次包括手动分析、连接检查和重试。
+
+配置文件含 schemaVersion、settings、filingQueue、moveJournal。无正文、请求包、密钥值或持久化索引；损坏数据不覆盖。自动开关和用量用 vault 范围的本机 local storage，首次自动运行关闭。模型建议不跨重启保存，恢复待办等待手动操作。
+
+所有事件由 Plugin 注册释放；卸载停止定时器、队列、索引分批工作和订阅。已发出的 HTTP 无法保证中止。宿主同步和外部文件编辑不受插件原子锁控制，确认流程会校验，但不能承诺跨进程事务。
