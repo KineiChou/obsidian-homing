@@ -20,7 +20,10 @@ export function renderSettings(container: HTMLElement, app: App, controller: Org
   const save = async (patch: Partial<OrganizerSettings>) => { try { await controller.saveSettings(patch); status.textContent = ''; } catch (error) { status.textContent = messageFor(error); throw error; } };
   const change = (patch: Partial<OrganizerSettings>) => { void save(patch).catch(() => undefined); };
   const inbox = new Setting(container).setName('收件箱').setDesc(controller.settings().inbox || '选择用于收集新笔记的目录。');
-  inbox.addButton(control => control.setButtonText('选择目录').onClick(() => new TargetPicker(app, controller.allFolders(), path => path, path => { void save({ inbox: path }).then(() => inbox.setDesc(path)).catch(() => undefined); }).open()));
+  inbox.addButton(control => control.setButtonText('选择目录').onClick(() => new TargetPicker(app, controller.allFolders(), path => path, path => {
+    // Setting has a fluent then() method, so returning it would recursively resolve the promise.
+    void save({ inbox: path }).then((): void => { inbox.setDesc(path); }).catch(() => undefined);
+  }).open()));
   inbox.addExtraButton(control => control.setIcon('folder-plus').setTooltip('创建收件箱').onClick(() => new CreateInboxModal(app, async path => { await controller.createInbox(path); inbox.setDesc(path); }).open()));
   const connection = new Setting(container).setName('Jev 连接').setDesc('选择保存的密钥。笔记内容与候选信息会发送到 TypeSafe。');
   new SecretComponent(app, connection.controlEl).setValue(controller.settings().secretName).onChange(name => change({ secretName: name }));
