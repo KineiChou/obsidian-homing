@@ -22,10 +22,14 @@ export class LocalMentionMatcher implements MentionMatcher {
     const text = snapshot.text.slice(0, end);
     const limit = Math.max(1, Math.min(20, Math.floor(this.candidateLimit) || 8));
     for (const match of this.index.match(text, snapshot.contextFrom).matches) {
-      if (!snapshot.allowedRanges.some(range => range.from <= match.from && range.to >= match.to)) continue;
+      const allowedRange = snapshot.allowedRanges.find(range => range.from <= match.from && range.to >= match.to);
+      if (!allowedRange) continue;
       const localFrom = match.from - snapshot.contextFrom, localTo = match.to - snapshot.contextFrom;
       if (!boundaries.has(localTo) || !wordBoundary(snapshot.text, localFrom, localTo)) continue;
-      const context = tokens(text.slice(0, localFrom) + ' ' + text.slice(localTo));
+      const contextFrom = Math.max(snapshot.contextFrom, allowedRange.from);
+      const contextTo = Math.min(snapshot.contextFrom + text.length, allowedRange.to);
+      const contextText = text.slice(contextFrom - snapshot.contextFrom, contextTo - snapshot.contextFrom);
+      const context = tokens(contextText.slice(0, match.from - contextFrom) + ' ' + contextText.slice(match.to - contextFrom));
       for (const token of tokens(match.text)) context.delete(token);
       const ranked = match.noteIds.flatMap(noteId => {
         const target = this.index.get(noteId);
@@ -37,7 +41,7 @@ export class LocalMentionMatcher implements MentionMatcher {
       result.push({ catalogueEpoch: this.index.epoch, candidates: ranked.slice(0, limit).map(item => item.target),
         anchor: { editorSessionId: snapshot.sessionId, noteId: snapshot.noteId, sourcePath: snapshot.path,
           documentRevision: snapshot.revision, from: match.from, to: match.to, originalText: match.text,
-          contextFrom: snapshot.contextFrom, contextText: text } });
+          contextFrom, contextText } });
       if (result.length === 3) break;
     }
     return result;

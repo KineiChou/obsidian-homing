@@ -47,7 +47,7 @@ export class StableInboxQueue implements InboxQueue {
     this.changed(); this.arm();
   }
   ignore(path: string): void { if (!this.items.has(path)) return; this.cancel(path); this.items.set(path, { path, status: 'ignored', updatedAt: Date.now(), message: null }); this.changed(); this.arm(); }
-  resume(path: string): void { if (this.items.get(path)?.status !== 'ignored') return; this.items.delete(path); this.touch(path, true); }
+  resume(path: string): void { if (this.items.get(path)?.status !== 'ignored') return; this.items.set(path, { path, status: 'waiting', updatedAt: Date.now(), message: null }); this.changed(); }
   mark(path: string, status: FilingStatus, message?: string, moveRecordId?: string): void {
     if (this.stopped || (!this.items.has(path) && status !== 'done' && status !== 'review')) return;
     this.cancel(path);

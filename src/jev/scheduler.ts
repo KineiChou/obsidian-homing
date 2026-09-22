@@ -12,7 +12,7 @@ interface Job {
   attempts: number;
   readyAt: number;
 }
-const priority = { link: 0, manual: 1, filing: 2 };
+const priority = { manual: 0, link: 1, filing: 2 };
 function bounded(value: number | undefined, fallback: number, minimum: number, maximum: number): number {
   return value === undefined || !Number.isFinite(value) ? fallback : Math.min(maximum, Math.max(minimum, value));
 }
@@ -40,6 +40,7 @@ export class SharedDecisionScheduler implements DecisionScheduler {
   evaluate(batch: ChoiceBatch, scope: RequestScope): Promise<ChoiceBatchResult> {
     try {
       if (this.disposed) throw new OrganizerError('cancelled', '分析已停止。');
+      if (this.paused) throw new OrganizerError('cancelled', this.reason ?? '分析已暂停。');
       assertCurrent(scope);
       serializeBatch(batch);
       this.cancel(scope.key);
@@ -53,6 +54,7 @@ export class SharedDecisionScheduler implements DecisionScheduler {
   }
   cancel(key: string): void {
     const queued = this.queue.get(key);
+    if (!queued && (this.active?.scope.key !== key || this.active.settled)) return;
     if (queued) { this.queue.delete(key); this.fail(queued, new OrganizerError('cancelled', '已由更新的分析取代。')); }
     if (this.active?.scope.key === key) this.fail(this.active, new OrganizerError('cancelled', '分析已取消，已发送请求仍可能计费。'));
     this.events.emit();
@@ -111,19 +113,18 @@ export class SharedDecisionScheduler implements DecisionScheduler {
   }
   private async run(job: Job): Promise<void> {
     let timeout: ReturnType<typeof setTimeout> | undefined;
-    let sent = false;
+    let reserved = false;
     let result: ChoiceBatchResult | undefined;
     let failure: OrganizerError | undefined;
     try {
       assertCurrent(job.scope);
       const limit = this.dailyLimit();
       if (!Number.isSafeInteger(limit) || limit < 1) throw new OrganizerError('budget', '今日分析额度已用完，请调整额度或明日再试。');
-      try { await this.usage.reserve(limit); }
+      try { await this.usage.reserve(limit); reserved = true; }
       catch (error) { throw error instanceof OrganizerError ? error : new OrganizerError('storage', '无法保存调用额度，本次分析未发送。'); }
       assertCurrent(job.scope);
       if (job.settled || this.disposed || this.paused) throw new OrganizerError('cancelled', '分析已停止。');
       if (job.scope.automatic) this.lastAutomatic = Date.now();
-      sent = true;
       timeout = setTimeout(() => {
         this.reason = '等待服务响应超时；正在等待已发送请求结束。';
         this.fail(job, new OrganizerError('timeout', this.reason));
@@ -135,7 +136,7 @@ export class SharedDecisionScheduler implements DecisionScheduler {
     } catch (error) { failure = this.error(error); }
     finally {
       if (timeout) clearTimeout(timeout);
-      if (sent) {
+      if (reserved) {
         try { await this.usage.settle(result?.inputTokens ?? null); }
         catch { failure = new OrganizerError('storage', '调用已结束，但用量保存失败。'); }
       }
@@ -148,7 +149,10 @@ export class SharedDecisionScheduler implements DecisionScheduler {
         if (retryable && job.attempts < this.retries && failure.retryAfterMs <= 60_000 && this.queue.size < this.maxPending && !this.disposed && !this.paused) {
           job.readyAt = Date.now() + Math.max(failure.retryAfterMs, 1000 * 2 ** job.attempts++);
           this.queue.set(job.scope.key, job);
-        } else { this.reason = failure.message; this.fail(job, failure); }
+        } else {
+          this.reason = failure.message; this.fail(job, failure);
+          if (failure.code === 'authentication') { this.paused = true; for (const queued of this.queue.values()) this.fail(queued, failure); this.queue.clear(); }
+        }
       } else if (result) { job.settled = true; job.resolve(result); this.reason = null; }
     }
     this.events.emit();

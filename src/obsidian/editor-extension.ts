@@ -18,16 +18,14 @@ export class EditorSessions {
   private focused: string | null = null;
   readonly extension: Extension;
   constructor(private readonly bridge: EditorBridge) {
-    const owner = this;
-    this.extension = ViewPlugin.fromClass(class {
-      readonly session: NoteEditorSession;
-      constructor(view: EditorView) {
-        this.session = new NoteEditorSession(view, owner.bridge, () => { owner.focused = this.session.id; });
-        owner.sessions.set(this.session.id, this.session);
-        if (view.hasFocus) owner.focused = this.session.id;
-      }
-      update(update: ViewUpdate): void { this.session.update(update); }
-      destroy(): void { this.session.destroy(); owner.sessions.delete(this.session.id); }
+    this.extension = ViewPlugin.define(view => {
+      const session = new NoteEditorSession(view, this.bridge, () => { this.focused = session.id; });
+      this.sessions.set(session.id, session);
+      if (view.hasFocus) this.focused = session.id;
+      return {
+        update: (update: ViewUpdate) => session.update(update),
+        destroy: () => { session.destroy(); this.sessions.delete(session.id); },
+      };
     });
   }
   active(path: string | null): NoteEditorSession | undefined {
@@ -51,6 +49,7 @@ export class NoteEditorSession implements EditorPort {
   constructor(private readonly view: EditorView, private readonly bridge: EditorBridge, private readonly focus: () => void) {}
   get path(): string | null { return this.view.state.field(editorInfoField, false)?.file?.path ?? null; }
   get focused(): boolean { return this.view.hasFocus; }
+  get currentRevision(): number | null { return this.alive ? this.revision : null; }
   update(update: ViewUpdate): void {
     if (update.focusChanged && this.view.hasFocus) this.focus();
     if (update.docChanged) {
@@ -110,7 +109,7 @@ export class NoteEditorSession implements EditorPort {
       blocked.push({ from: from + match.index, to: from + match.index + match[0].length });
     }
     if (this.view.state.doc.sliceString(0, 4).startsWith('---')) {
-      const frontmatter = this.view.state.doc.sliceString(0, Math.min(this.view.state.doc.length, 16384));
+      const frontmatter = this.view.state.doc.sliceString(0, Math.min(this.view.state.doc.length, 1200));
       const end = /^---\s*$/gm;
       end.exec(frontmatter);
       const closing = end.exec(frontmatter);

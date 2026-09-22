@@ -34,7 +34,7 @@ export class ConfirmedLinkService implements LinkService {
     const target = this.index.get(plan.target.noteId);
     if (!target || !this.sameTarget(plan.target, target)) this.stale();
     const editor = this.validate(plan.anchor, target);
-    if (!this.host.resolvesTo(plan.replacement, plan.anchor.sourcePath, target)) {
+    if (this.host.generateLink(target, plan.anchor.sourcePath, plan.anchor.originalText) !== plan.replacement || !this.host.resolvesTo(plan.replacement, plan.anchor.sourcePath, target)) {
       throw new OrganizerError('unsafe', '链接目标已改变，请重新查找。');
     }
     editor.replace(plan.anchor.from, plan.anchor.to, plan.replacement);

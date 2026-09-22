@@ -1,6 +1,7 @@
 .note-organizer { color: var(--text-normal); font-size: var(--font-ui-small); line-height: var(--line-height-normal); }
 .note-organizer-head, .note-organizer-actions, .note-organizer-tabs { display: flex; align-items: center; flex-wrap: wrap; gap: var(--size-4-2); }
 .note-organizer-head { justify-content: space-between; margin-bottom: var(--size-4-4); }
+.note-organizer-actions { margin-top: var(--size-4-3); }
 .note-organizer-tabs > button { flex: 1; }
 .note-organizer-tabs > button[aria-pressed="true"] { background: var(--background-modifier-hover); box-shadow: inset 0 -2px var(--interactive-accent); }
 .note-organizer-muted { color: var(--text-muted); }

@@ -9,7 +9,7 @@ export interface OrganizerController {
   state(): ReviewState;
   subscribe(listener: () => void): Unsubscribe;
   settings(): OrganizerSettings;
-  saveSettings(value: OrganizerSettings): Promise<void>;
+  saveSettings(patch: Partial<OrganizerSettings>): Promise<void>;
   enabled(): boolean;
   setEnabled(enabled: boolean): void;
   testConnection(): Promise<void>;
