@@ -8,6 +8,7 @@
 
 - [产品需求与交互设计](PRD-note-organizer.md)：使用流程、默认行为、异常处理、首版范围与验收标准。
 - [Jev 接入设计](docs/jev-integration.md)：官方能力约束、请求示例、响应校验与 Obsidian 接口边界。
+- [目录分类算法](docs/folder-classification.md)：逐层与混合深度比较、分组提名与统一决选、目录用途建模和资源限制。
 - [编辑时双链补齐可行性](docs/link-suggestions.md)：文本位置识别、全库候选检索、Jev 消歧与确认插入。
 - [轻量索引算法比较](docs/link-indexing.md)：四种候选算法、增量更新、零文件读写的自动查询路径与合成实验。
 
