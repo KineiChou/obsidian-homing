@@ -1,0 +1,100 @@
+{
+  "runtime": "v22.21.1",
+  "platform": "darwin",
+  "architecture": "arm64",
+  "measuredAt": "2026-09-22T06:15:50.410Z",
+  "scope": "Synthetic label matching only. Index heap excludes input labels, metadata, postings, editor, network, and peak construction memory. Not an Obsidian benchmark.",
+  "correctness": "Outputs matched an indexOf oracle on synthetic samples and overlapping/Unicode fixtures; timed runs have equal match-count checksums.",
+  "measurements": [
+    {
+      "method": "linear",
+      "noteCount": 5000,
+      "termCount": 10003,
+      "queryLength": {
+        "min": 949,
+        "max": 1008
+      },
+      "queries": 160,
+      "buildMs": 0.0115,
+      "indexHeapMiB": 0,
+      "p50Ms": 1.1291,
+      "p95Ms": 1.2964,
+      "checksum": 367
+    },
+    {
+      "method": "radix",
+      "noteCount": 5000,
+      "termCount": 10003,
+      "queryLength": {
+        "min": 949,
+        "max": 1008
+      },
+      "queries": 160,
+      "buildMs": 6.5373,
+      "indexHeapMiB": 3.4477,
+      "p50Ms": 0.0065,
+      "p95Ms": 0.0087,
+      "checksum": 367
+    },
+    {
+      "method": "ahoCorasick",
+      "noteCount": 5000,
+      "termCount": 10003,
+      "queryLength": {
+        "min": 949,
+        "max": 1008
+      },
+      "queries": 160,
+      "buildMs": 8.8143,
+      "indexHeapMiB": 5.1852,
+      "p50Ms": 0.0067,
+      "p95Ms": 0.0095,
+      "checksum": 367
+    },
+    {
+      "method": "linear",
+      "noteCount": 20000,
+      "termCount": 40003,
+      "queryLength": {
+        "min": 949,
+        "max": 1005
+      },
+      "queries": 160,
+      "buildMs": 0.0187,
+      "indexHeapMiB": 0,
+      "p50Ms": 4.575,
+      "p95Ms": 4.9291,
+      "checksum": 378
+    },
+    {
+      "method": "radix",
+      "noteCount": 20000,
+      "termCount": 40003,
+      "queryLength": {
+        "min": 949,
+        "max": 1005
+      },
+      "queries": 160,
+      "buildMs": 21.6422,
+      "indexHeapMiB": 13.6564,
+      "p50Ms": 0.0064,
+      "p95Ms": 0.0077,
+      "checksum": 378
+    },
+    {
+      "method": "ahoCorasick",
+      "noteCount": 20000,
+      "termCount": 40003,
+      "queryLength": {
+        "min": 949,
+        "max": 1005
+      },
+      "queries": 160,
+      "buildMs": 26.359,
+      "indexHeapMiB": 18.2942,
+      "p50Ms": 0.007,
+      "p95Ms": 0.0093,
+      "checksum": 378
+    }
+  ]
+}
