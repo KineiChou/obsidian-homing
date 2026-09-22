@@ -1,0 +1,21 @@
+.note-organizer { color: var(--text-normal); font-size: var(--font-ui-small); line-height: var(--line-height-normal); }
+.note-organizer-head, .note-organizer-actions, .note-organizer-tabs { display: flex; align-items: center; flex-wrap: wrap; gap: var(--size-4-2); }
+.note-organizer-head { justify-content: space-between; margin-bottom: var(--size-4-4); }
+.note-organizer-actions { margin-top: var(--size-4-3); }
+.note-organizer-tabs > button { flex: 1; }
+.note-organizer-tabs > button[aria-pressed="true"] { background: var(--background-modifier-hover); box-shadow: inset 0 -2px var(--interactive-accent); }
+.note-organizer-muted { color: var(--text-muted); }
+.note-organizer-card { padding: var(--size-4-4) 0; border-bottom: 1px solid var(--background-modifier-border); }
+.note-organizer-card > button:first-child { background: transparent; box-shadow: none; padding-inline: 0; text-align: start; white-space: normal; height: auto; overflow-wrap: anywhere; }
+.note-organizer-path, .note-organizer-path button, .note-organizer-recent span { white-space: normal; overflow-wrap: anywhere; text-align: start; height: auto; }
+.note-organizer blockquote { margin: 0 0 var(--size-4-3); padding: var(--size-4-2) var(--size-4-3); border-inline-start: 2px solid var(--background-modifier-border); color: var(--text-muted); max-height: 12em; overflow: auto; }
+.note-organizer details { margin-block: var(--size-4-3); }
+.note-organizer summary { color: var(--text-muted); }
+.note-organizer-feedback { color: var(--text-normal); overflow-wrap: anywhere; }
+.note-organizer-footer { padding-block: var(--size-4-4); }
+.note-organizer-recent { padding-block: var(--size-4-2); }
+.note-organizer-settings .setting-item { flex-wrap: wrap; }
+.note-organizer-settings .setting-item-info { min-width: 150px; }
+.note-organizer-settings textarea { width: 100%; }
+.note-organizer-status { padding: 0; height: auto; box-shadow: none; background: transparent; color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.note-organizer button:disabled { cursor: default; }

@@ -1,27 +1,49 @@
 # Note Organizer
 
-面向 Obsidian 的笔记整理插件：发现 inbox 中的笔记，由 Jev 推荐已有目录，经用户确认后移动；编辑时发现可补充的内部链接，经确认后插入。
+Obsidian 桌面插件：为收件箱笔记推荐已有目录，并在写作时推荐内部链接。每次移动和插入均需确认。
 
-当前状态：需求设计阶段，尚无可安装插件。
+当前版本 **0.1.0 开发预览**。已实现模块、原生侧栏与设置、自动化测试及安装包构建。真实 Jev 连接和三个固定示例已通过；Obsidian 宿主与真实语料推荐质量仍待验证，验证范围见 [验证记录](docs/validation.md)。
 
-## 文档
+## 使用
 
-- [产品需求与交互设计](PRD-note-organizer.md)：使用流程、默认行为、异常处理、首版范围与验收标准。
-- [Jev 接入设计](docs/jev-integration.md)：官方能力约束、请求示例、响应校验与 Obsidian 接口边界。
-- [目录分类算法](docs/folder-classification.md)：逐层与混合深度比较、分组提名与统一决选、目录用途建模和资源限制。
-- [技术栈与接口设计](docs/technical-design.md)：构建方式、Obsidian API、模块契约、编辑器集成、持久化及验证边界。
-- [低打扰交互与设置](docs/interaction-design.md)：安静的建议入口、一次确认、默认值、渐进设置与异常反馈。
-- [编辑时双链补齐可行性](docs/link-suggestions.md)：文本位置识别、全库候选检索、Jev 消歧与确认插入。
-- [轻量索引算法比较](docs/link-indexing.md)：四种候选算法、增量更新、只访问内存的本地候选查询与合成实验。
+需要 Obsidian **1.11.4+ 桌面版**。将 `dist/note-organizer` 中的 `main.js`、`manifest.json`、`styles.css` 放入测试知识库的 `.obsidian/plugins/note-organizer/`，然后在社区插件中启用。
 
-## 产品原则
+1. 在插件设置中选择或创建收件箱，选择由 Obsidian 保存的 Jev 密钥。
+2. 点击“启用归档建议”。固定示例连接成功后，自动处理新进入收件箱的笔记；已有笔记通过面板中的“分析已有笔记”启动。
+3. 需要整理时点击状态栏“整理”。默认一个推荐位置，可改选，确认才移动；同一插件会话内可撤销。
+4. 链接推荐通过“为当前文字查找链接”命令使用，也可单独开启“写作时准备链接建议”。确认后保留文字并插入链接，使用编辑器撤销。
 
-- 沿用用户已有的目录结构，使用完整路径区分同名目录。
-- 自动生成建议，每次移动由用户确认。
-- 允许没有合适目录，允许笔记继续留在 inbox。
-- 保护笔记内容、内部链接和撤销能力。
-- 明示发送给 TypeSafe 的数据范围，提供暂停自动分析的入口。
-- 自动链接建议保留原文措辞，只有确认后才插入链接标记。
-- 自动准备建议，用户主动查看；新建议不弹窗、不抢焦点，不要求清空建议列表。
+归档请求发送当前笔记标题、去除属性区的正文、最多 8 个标签及候选目录信息。链接请求发送当前允许的局部文字与候选元数据，可能含尚未保存内容。两者共享每日请求上限，默认本机 100 次；配置只保存密钥名称。
 
-工作名称为 Note Organizer，发布名称与许可证在发布前确定。
+## 开发
+
+Node.js 22.12+，依赖使用 npm 11 干净安装验证。
+
+```sh
+npx --yes npm@11 ci --ignore-scripts
+npm run check
+npm run package
+```
+
+`npm run package` 输出可安装目录 `dist/note-organizer/`。构建命令不自动安装到知识库，不发布远程仓库。开发监视使用 `npm run dev`；实际索引基准使用 `node --expose-gc benchmarks/metadata-index.mjs`。
+
+`main` 保存通过当前验证的预览版本，`dev` 集成，`feat/*` 保留各模块开发分支。接口定义先于实现提交；入口见 [开发与模块契约](docs/development.md)。
+
+## 当前边界
+
+- 单个收件箱、Markdown、已有目标目录；支持混合深度分类，超出单题容量时组内提名后统一决选。
+- 链接只匹配文件名和 aliases，不扫描全库正文，不做 embedding 或语义同义词召回；自动候选查询只访问内存。
+- 为避免移动后断链，无法确认引用保持有效时拒绝移动；显式旧路径引用可能因此阻止归档。
+- 重启后旧移动记录进入人工核对，不自动再次移动，也不提供跨会话自动撤销。
+- 候选正文补充、覆盖受限提示、更广的手动检索和多设备协调尚未实现。
+
+## 设计文档
+
+- [产品需求](PRD-note-organizer.md)
+- [技术栈、模块和接口](docs/technical-design.md)
+- [低打扰交互与设置](docs/interaction-design.md)
+- [目录分类算法](docs/folder-classification.md)
+- [Jev 接入](docs/jev-integration.md)
+- [双链补齐](docs/link-suggestions.md)与[轻量索引方案比较](docs/link-indexing.md)
+
+工作名称为 Note Organizer；公开发布名称与许可证尚未确定。
