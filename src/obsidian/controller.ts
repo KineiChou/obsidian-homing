@@ -42,6 +42,7 @@ export class ObsidianOrganizer implements OrganizerController {
   private settingsWrite: Promise<void> = Promise.resolve();
   private filingRevision = 0;
   private linkRevision = 0;
+  private requestRevision = 0;
   private readonly profiles = new MemoryFolderProfiles();
   private readonly excerpts = new Map<string, { originalChars: number; sentChars: number }>();
   private filingFingerprint = '';
@@ -85,11 +86,11 @@ export class ObsidianOrganizer implements OrganizerController {
       encodeProposal: proposal => this.encodeProposal(proposal), restoreProposal: (path, proposal) => this.restoreProposal(path, proposal),
       isEditing: path => this.editors.editing(path), persist: entries => this.store.updateQueue(entries),
       propose: async (path, automatic, isCurrent) => {
-        const note = await this.vault.note(path, !automatic), folders = this.catalog.snapshot(), settings = this.filingRevision;
+        const note = await this.vault.note(path, !automatic), folders = this.catalog.snapshot(), settings = this.filingRevision, requestRevision = this.requestRevision;
         const prepared = prepareNote(note, this.settings().longNoteStrategy);
         if (prepared.excerpt) this.excerpts.set(path, prepared.excerpt); else this.excerpts.delete(path);
         this.events.emit();
-        return classifier.propose(prepared.note, folders, this.context(), { key: 'filing:' + path, priority: automatic ? 'filing' : 'manual', automatic, isCurrent: () => !this.disposed && isCurrent() && this.filingRevision === settings && this.vault.revision(path) === note.source.revision && this.catalog.snapshot().revision === folders.revision && this.vault.eligible(path) });
+        return classifier.propose(prepared.note, folders, this.context(), { key: 'filing:' + path, priority: automatic ? 'filing' : 'manual', automatic, isCurrent: () => !this.disposed && this.requestRevision === requestRevision && isCurrent() && this.filingRevision === settings && this.vault.revision(path) === note.source.revision && this.catalog.snapshot().revision === folders.revision && this.vault.eligible(path) });
       },
     });
     this.moves = new ConfirmedMoveService({ source: path => this.vault.source(path), currentPath: id => this.vault.currentPath(id), exists: path => Boolean(this.plugin.app.vault.getAbstractFileByPath(path)), eligible: path => this.vault.eligible(path), referencesSafe: (path, destination) => this.vault.referencesSafe(path, destination), rename: (from, to) => this.vault.rename(from, to), folders: () => this.catalog.snapshot(), settingsRevision: () => this.filingRevision }, this.store.journal);
@@ -209,7 +210,11 @@ export class ObsidianOrganizer implements OrganizerController {
       await this.store.updateSettings(settings); this.configuration = this.store.snapshot().settings; this.filingFingerprint = fingerprint;
       if (filingChanged) { this.filingRevision++; this.excerpts.clear(); }
       if (linksChanged) { this.linkRevision++; this.links = []; }
-      if (before.secretName !== settings.secretName || before.modelId !== settings.modelId || before.provider !== settings.provider || before.endpoint !== settings.endpoint) this.scheduler.setPaused(false);
+      if (before.secretName !== settings.secretName || before.modelId !== settings.modelId || before.provider !== settings.provider || before.endpoint !== settings.endpoint) {
+        this.requestRevision++;
+        // Cancel pending work without invalidating already reviewed proposals on a credential change.
+        this.scheduler.setPaused(true); this.scheduler.setPaused(false);
+      }
       const folderRevision = this.catalog.snapshot().revision; this.refreshFolders();
       if ((filingChanged || (before.autoFiling && !settings.autoFiling)) && folderRevision === this.catalog.snapshot().revision) this.queue.invalidate(proposal => this.preserveProposal(proposal));
       if (JSON.stringify(before.excludedPaths) !== JSON.stringify(settings.excludedPaths)) { this.index.clear(); this.profiles.clear(); this.profilePaths.clear(); void this.buildIndex(); }
@@ -294,11 +299,11 @@ export class ObsidianOrganizer implements OrganizerController {
   private async analyzeLinks(id: string, automatic: boolean): Promise<void> {
     const session = this.editors.get(id), snapshot = session?.snapshot({ dirtyOnly: automatic });
     if (!session || !snapshot || !this.vault.linkSource(snapshot.path) || !this.ready) return;
-    const settingsRevision = this.linkRevision, epoch = this.index.epoch;
+    const settingsRevision = this.linkRevision, epoch = this.index.epoch, requestRevision = this.requestRevision;
     const matcher = new LocalMentionMatcher(this.index);
     const inputs = matcher.inputs(snapshot, target => this.vault.allowed(target.path)).filter(input => !session.suppressed(input.anchor));
     if (!inputs.length) { session.acknowledgeAnalysis(snapshot); if (!automatic) { this.message = '暂未找到合适的链接。'; this.events.emit(); } return; }
-    const isCurrent = () => !this.disposed && (!automatic || (this.enabled() && this.settings().autoLinks)) && this.linkRevision === settingsRevision && this.index.epoch === epoch && session.currentRevision === snapshot.revision && session.path === snapshot.path && this.vault.linkSource(snapshot.path) && inputs.every(input => input.candidates.every(target => this.index.get(target.noteId)?.revision === target.revision));
+    const isCurrent = () => !this.disposed && this.requestRevision === requestRevision && (!automatic || (this.enabled() && this.settings().autoLinks)) && this.linkRevision === settingsRevision && this.index.epoch === epoch && session.currentRevision === snapshot.revision && session.path === snapshot.path && this.vault.linkSource(snapshot.path) && inputs.every(input => input.candidates.every(target => this.index.get(target.noteId)?.revision === target.revision));
     try {
       const proposals = await this.recommender.propose(inputs, this.context('link'), { key: 'link:' + id, priority: automatic ? 'link' : 'manual', automatic, isCurrent });
       if (!isCurrent()) return;
@@ -316,7 +321,7 @@ export class ObsidianOrganizer implements OrganizerController {
   dismissLink(proposal: LinkProposal): void { this.editors.get(proposal.input.anchor.editorSessionId)?.suppress(proposal.input.anchor, proposal.selected); this.links = this.links.filter(item => item.id !== proposal.id); this.events.emit(); }
   openNote(path: string): void { void this.plugin.app.workspace.openLinkText(path, this.activePath ?? '', false); }
   target(id: number) { return this.index.get(id); }
-  async testConnection(): Promise<void> { this.scheduler.setPaused(false); await this.scheduler.evaluate({ modelId: this.settings().modelId, state: 'A short example about learning.', questions: [{ id: 'connection', instructions: 'Choose the matching subject.', options: [{ id: 'learning', description: 'Learning and reading' }, { id: 'none', description: 'Other' }] }] }, { key: 'connection', priority: 'manual', automatic: false, isCurrent: () => !this.disposed }); }
+  async testConnection(): Promise<void> { const requestRevision = this.requestRevision; this.scheduler.setPaused(false); await this.scheduler.evaluate({ modelId: this.settings().modelId, state: 'A short example about learning.', questions: [{ id: 'connection', instructions: 'Choose the matching subject.', options: [{ id: 'learning', description: 'Learning and reading' }, { id: 'none', description: 'Other' }] }] }, { key: 'connection', priority: 'manual', automatic: false, isCurrent: () => !this.disposed && this.requestRevision === requestRevision }); }
   private report(error: unknown): void { this.message = messageFor(error); this.events.emit(); }
   dispose(): void { this.disposed = true; this.generation++; this.scheduler?.dispose(); this.queue?.dispose(); this.editors.dispose(); this.index.clear(); this.profiles.clear(); this.profilePaths.clear(); this.excerpts.clear(); this.events.clear(); void this.store.flush().catch(() => undefined); }
 }

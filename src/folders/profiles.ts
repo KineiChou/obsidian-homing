@@ -5,7 +5,11 @@ export interface ProfileNote { readonly path: string; readonly title: string; re
 export interface ProfiledTarget extends FolderTarget { readonly profile?: { readonly titles: readonly string[]; readonly tags: readonly string[] } }
 function tokens(text: string): Set<string> {
   const words = text.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
-  return new Set(words.flatMap(word => /[\p{Script=Han}]/u.test(word) ? Array.from(word).slice(0, -1).map((char, i) => char + Array.from(word)[i + 1]) : [word]).filter(word => word.length > 1));
+  return new Set(words.flatMap(word => {
+    if (!/[\p{Script=Han}]/u.test(word)) return [word];
+    const points = Array.from(word);
+    return points.slice(0, -1).map((char, i) => char + points[i + 1]);
+  }).filter(word => word.length > 1));
 }
 /** Bounded local metadata only. Callers opt in before enriching a request. */
 export class MemoryFolderProfiles {
@@ -25,7 +29,12 @@ export class MemoryFolderProfiles {
     }
     return targets.map(target => {
       const notes = byFolder.get(target.path) ?? [];
-      return { ...target, ...(notes.length ? { profile: { titles: notes.map(note => note.title), tags: [...new Set(notes.flatMap(note => note.tags))].slice(0, 16) } } : {}) };
+      if (!notes.length) return target;
+      const profile = { titles: notes.map(note => note.title), tags: [...new Set(notes.flatMap(note => note.tags))].slice(0, 16) };
+      while (new TextEncoder().encode(JSON.stringify(profile)).length > 1000) {
+        if (profile.titles.length > 1) profile.titles.pop(); else profile.tags.pop();
+      }
+      return { ...target, profile };
     });
   }
   prefilter(note: NoteSnapshot, targets: readonly ProfiledTarget[]): readonly ProfiledTarget[] {
@@ -40,7 +49,9 @@ export class MemoryFolderProfiles {
     }).sort((a, b) => b.score - a.score || a.target.path.localeCompare(b.target.path));
     // Preserve all explicitly configured destinations; weak or broad signals use full grouping.
     const protectedTargets = targets.filter(target => target.directPurpose || target.effectiveRules.length);
-    if (protectedTargets.length > 64 || (scores[0]?.overlap ?? 0) < 2 || scores.filter(item => item.score > 0).length > 64) return targets;
+    const evidenceTargets = scores.filter(item => item.score > 0);
+    const requiredIds = new Set([...protectedTargets.map(target => target.id), ...evidenceTargets.map(item => item.target.id)]);
+    if (requiredIds.size > 64 || (scores[0]?.overlap ?? 0) < 2) return targets;
     const chosen = new Map(protectedTargets.map(target => [target.id, target]));
     for (const item of scores) { if (chosen.size >= 64) break; chosen.set(item.target.id, item.target); }
     return [...chosen.values()];
