@@ -1,3 +1,4 @@
+import type { OrganizerError } from '../core/errors';
 import type { DecisionContext, RequestScope } from '../jev/types';
 export interface LinkTarget { readonly noteId: number; readonly path: string; readonly title: string; readonly aliases: readonly string[]; readonly tags: readonly string[]; readonly description: string; readonly revision: number }
 export interface Match { readonly from: number; readonly to: number; readonly text: string; readonly noteIds: readonly number[] }
@@ -24,15 +25,21 @@ export interface EditorSnapshot {
   readonly contextFrom: number;
   readonly text: string;
   readonly allowedRanges: readonly TextRange[];
+  readonly dirtyRanges?: readonly TextRange[];
   readonly linkedNoteIds: ReadonlySet<number>;
 }
 export interface MentionMatcher { inputs(snapshot: EditorSnapshot, allowed: (target: LinkTarget) => boolean): readonly LinkInput[] }
 export interface LinkPlan { readonly id: string; readonly proposalId: string; readonly anchor: TextAnchor; readonly target: LinkTarget; readonly replacement: string; readonly catalogueEpoch: number; readonly settingsRevision: number }
+export interface EditorChange { readonly dirtyRanges: readonly TextRange[]; mapAnchor(anchor: TextAnchor): TextAnchor | null }
+export interface LinkInsertion { readonly anchor: TextAnchor; readonly replacement: string; readonly target: number }
+export interface LinkConfirmation { readonly appliedPlanIds: readonly string[]; readonly failures: readonly { planId: string; error: OrganizerError }[] }
 export interface EditorPort {
   snapshot(): EditorSnapshot | null;
   read(from: number, to: number): string;
   allows(from: number, to: number): boolean;
   replace(from: number, to: number, replacement: string): void;
+  replaceMany(changes: readonly { from: number; to: number; replacement: string }[]): void;
+  rememberInsertions?(insertions: readonly LinkInsertion[]): void;
   suppress(anchor: TextAnchor, targetId: number | null): void;
 }
 export interface LinkHost {
@@ -45,4 +52,5 @@ export interface LinkHost {
 export interface LinkService {
   prepare(proposal: LinkProposal, targetId: number): LinkPlan;
   confirm(planId: string): void;
+  confirmMany(planIds: readonly string[]): LinkConfirmation;
 }

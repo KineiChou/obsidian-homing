@@ -5,7 +5,7 @@ import type { ChoiceAnswer, ChoiceBatch, ChoiceBatchResult } from './types';
 const ROUNDING_RADIUS = 0.005;
 const FLOAT_TOLERANCE = 1e-9;
 
-function invalid(): never { throw new OrganizerError('invalid-response', '服务返回的选择结果无效，请重试。'); }
+function invalid(): never { throw new OrganizerError('invalid-response', 'error.responseInvalid'); }
 function record(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) invalid();
   return value as Record<string, unknown>;

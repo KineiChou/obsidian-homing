@@ -1,6 +1,6 @@
 # 开发与模块契约
 
-`main` 保存通过验证的可交付版本，`dev` 集成下一版本；`feat/*` 从 `dev` 创建，完成后通过无快进合并保留边界。每个并行实现使用独立工作区，不共享待提交文件。仓库当前仅在本机，不发布远程仓库。
+`main` 保存通过验证的可交付版本，`dev` 集成下一版本；`feat/*` 从 `dev` 创建，完成后通过无快进合并保留边界。每个并行实现使用独立工作区，不共享待提交文件。提交与发布以当前任务授权和仓库规则为准。
 
 接口先于实现：`src/*/types.ts` 是模块之间的契约。纯领域模块不依赖 Obsidian、DOM 或磁盘；宿主通过 port 注入。模型客户端只返回选择，不获得文件写入能力。UI 只能确认已展示的移动或插入计划。
 
@@ -13,28 +13,58 @@
 - `jev/client.ts` 导出 `JevClient implements DecisionClient`，构造参数 `HttpTransport, SecretProvider`。
 - `jev/response-parser.ts` 导出 `parseChoiceResponse(value: unknown, batch: ChoiceBatch): ChoiceBatchResult`。
 - `jev/scheduler.ts` 导出 `SharedDecisionScheduler implements DecisionScheduler`，构造参数 `DecisionClient, UsageStore, () => number`（当前每日上限），可选 `SchedulerOptions`。
-- `filing/classifier.ts` 导出 `MixedDepthClassifier implements FolderClassifier`，构造参数 `DecisionScheduler`。
+- `filing/classifier.ts` 导出 `MixedDepthClassifier implements FolderClassifier`，构造参数 `DecisionScheduler`，可选配置 getter 返回 `longNoteStrategy` 与 `profiles`。
+- `filing/note-excerpt.ts` 的 `prepareNote(note, strategy)` 返回 `{ note, excerpt? }`；源指纹始终对应完整原文。
+- `folders/profiles.ts` 的 `MemoryFolderProfiles` 仅保存内存元数据，提供 `upsert/remove/clear/enrich/prefilter`；默认不将画像附入请求。
+- `providers/client.ts` 的 `createDecisionClient(transport, secrets, settingsGetter)` 返回统一 `DecisionClient`，按 `provider/endpoint` 路由 Jev、OpenAI-compatible 或 Anthropic。
 - `linking/recommender.ts` 导出 `JevLinkRecommender implements LinkRecommender`，构造参数 `DecisionScheduler`，内存缓存有界。
 - `linking/metadata-index.ts` 导出 `MemoryMetadataIndex implements MetadataIndex`，无参构造，压缩前缀树可独立成领域内文件。
 - `linking/mention-matcher.ts` 导出 `LocalMentionMatcher implements MentionMatcher`，构造参数 `MetadataIndex`。
 - `linking/link-service.ts` 导出 `ConfirmedLinkService implements LinkService`，构造参数 `MetadataIndex, LinkHost`。
 
-`RequestScope.isCurrent` 贯穿排队、批次、响应；逻辑超时不释放实际网络名额。任何源文件、目标、配置或编辑版本变化使旧计划失效。所有持久化更新串行，先持久化移动意图再移动；意图保存失败时禁止修改文件。
+`RequestScope.isCurrent` 贯穿排队、批次、响应；逻辑超时不释放实际网络名额。确认计划严格校验源内容、目标和相关版本；已经得到的归档建议则可以在无关目录变化后保留并映射到新目录版本。归档与补链配置版本分开；额度、自动链接开关等无关设置不清空归档结果，仅排除路径变化重建元数据索引。
+
+## 持久化与恢复
+
+`PersistedState.schemaVersion` 为 2，兼容读取 1；新增设置使用默认值，未知 schema 或损坏核心配置禁止写回。单条损坏建议降级为等待，加载过程不覆盖原文件。队列持久化只保存路径、忽略状态和可选最小建议：完整原文 SHA-256、目标路径或 null、前三个目标路径与分值、模型／提示版本、分类设置指纹、创建时间及摘录长度；不保存正文、会话 ID 或目录 ID。
+
+`InboxQueueDependencies.encodeProposal/restoreProposal` 由 controller 注入。启动先初始化目录，再创建队列并恢复建议，避免目录初始化触发空队列写回。异步 `restore()` 校验原文、设置指纹、模型和有效目标，并绑定当前会话身份；恢复期间的编辑、移除或重新分析使旧恢复结果失效。恢复和历史库存展示不联网，也不自动排队。`invalidate(preserve)` 保留仍有效的建议；失效建议和已有分析任务在自动归档允许时重新稳定等待，历史 waiting 库存不因目录变化或启用开关而上传。队列一次只向调度器提交一篇笔记，预算耗尽回到 waiting。
+
+移动意图必须先持久化，再写文件，最后保存结果。上一会话的 done 转为不可撤销的 archived；intent 通过两端路径和内容指纹确认已完成或未执行时归档，无法确定才进入 review。`acknowledge(recordId)` 将人工核对的 review 归档。完成历史最多保留 100 条，未解决 intent/review 不参与裁剪；撤销仅授权给当前服务实例成功完成的记录，不复用持久化 noteId。
+
+## 调度、预估与宿主端口
+
+`UsageStore.reserve(limit, { automaticLinkLimit }?)` 在本机保存预留；自动补链的子额度为 `floor(dailyRequestLimit * 0.3)`。旧用量缺失 `automaticLinkRequests` 时补 0；自动补链重试也占子额度。子额度耗尽不暂停共享调度器，归档和手动补链仍可使用总额度。
+
+`previewAnalysis(paths?)` 只读文件元数据和目录描述，按修改时间倒序列出可分析笔记并粗估正常请求范围；模拟字节分组与打包，摘录策略为状态预留最多 12 KB，全文策略参考文件大小。启用画像且目录超过 254 时，上界另计一次短名单拒绝后的回退请求。预估不含重试，也不保证实际请求数或费用。默认批量范围排除 ready；显式勾选可重新分析 ready。`analyzeInbox(paths)` 只处理用户选定的有效路径，排除 ignored、analyzing 和 moving。`readPreview(path)` 只读所选笔记，最多返回 20,000 UTF-16 单元且不截断代理对。`createDestination(path)` 先按当前目录规则验证，再显式创建目录。
+
+`EditorBridge.changed` 映射未受影响锚点；自动查询使用 `snapshot({ dirtyOnly: true })`。`confirmLinks(plans)` 返回 `LinkConfirmation`，同一编辑会话内通过一次事务提交，撤销抑制由链接服务登记。语义结果缓存不含文档 revision 或绝对锚点偏移；确认计划仍校验当前原文与版本。
 
 ## 验证
 
-Node 22.12+；使用 npm 11 验证 `npx --yes npm@11 ci --ignore-scripts`，再执行 `npm run check`。单元测试验证范围、匹配、候选校验和状态转换；集成测试使用内存 vault、延迟 HTTP 和编辑器替身验证完整确认、撤销、竞争与失败流程。真实 Obsidian 的链接更新、CM6 节点与撤销行为另用专用测试 vault 核对，不能把替身测试描述为真实宿主验证。
+Node 22.12+；使用 npm 11 验证 `npx --yes npm@11 ci --ignore-scripts`，再执行 `npm run check`。单元测试验证范围、匹配、候选校验和状态转换；集成测试使用内存 vault、延迟 HTTP 和编辑器替身验证完整确认、撤销、竞争与失败流程。真实宿主使用独立合成测试 vault 核对，不能把替身测试描述为真实宿主验证；已完成的场景与剩余边界见下文及验证记录。
 
 构建输出为根目录 `main.js`、`manifest.json`、`styles.css`。不提交凭据、用户笔记或 node_modules。
 
-## UI 参考与当前取舍
+## UI 入口与端口
 
-- [QuickAdd](https://quickadd.obsidian.guide/docs/)：配置后通过命令快速执行。采用原生命令面板，不抢占用户热键，也不另造导航体系。
-- [Templater 设置](https://silentvoid13.github.io/Templater/settings.html)：按能力和范围配置。常用开关直接可见，排除、目录用途和用量折叠；算法参数保留为工程常量。
-- [Obsidian 设置指南](https://docs.obsidian.md/Plugins/User%20interface/Settings)：采用原生 Setting 与主题变量。当前最低版本使用命令式 display，不使用新版专属声明式 API。
-- [原生反向链接](https://help.obsidian.md/plugins/backlinks)：只插入当前笔记的内部链接，反向关系交给宿主，不改写目标笔记。
+0.2.0 开发预览在主区域复用 `note-organizer-inbox` ItemView；旧侧栏 view 会迁移。`ReviewPanel` 负责分组清单、单篇 Markdown 预览与操作栏，`AnalysisModal` 在发送前确认待分析路径，`LinkSuggestionsModal` 固定源会话并批量确认链接，`filingBanner` 用 CM6 顶部 panel 展示当前笔记归档与撤销。状态栏展示归档图标／数量及当前笔记链接入口；设置使用原生 `setHeading`，更多操作使用原生 `Menu`。
 
-面板只展示一个目标；更改时再打开选择器。确认卡片保持高度，背景结果不抢焦点、不切换当前笔记／收件箱模式；未确定位置的笔记放在建议之后的折叠组。浏览器验证使用生产 ReviewPanel 和模拟控制器；真实宿主仍见验证清单。
+整理视图成功归档后自动前进，并用撤销条和短暂防连击保护避免连续误操作；分值接近时可显示两个改选目录，不展示模型概率。状态变化将条目移入对应分组，保留当前笔记和焦点；同组内不因后台更新重新排序。预览与计划准备均有异步代次检查，销毁时释放 MarkdownRenderer 子组件和订阅；插件重载时重建遗留视图的协调器绑定。归档界面与提示条可以并存，任何入口都不能凭模型响应直接写入；实际交互以 [交互文档](interaction-design.md) 为准。
+
+`EditorSession.snapshot()` 只读取，不清除脏区间。协调器仅在当前快照成功返回建议或确认没有候选时调用 `acknowledgeAnalysis(snapshot)`；调用校验会话与文档版本，只清除已分析窗口。失败、过期响应、预算拒绝和超时保留待分析范围，确认预览读取不得消费自动分析任务。
+
+## 卸载与实例交接
+
+协调器在宿主 App 上以 `Symbol.for` 保存实例交接屏障，跨插件 bundle 重载保持有效。新 `initialize()` 在读取插件数据前等待旧实例排空已接受的本地工作。`dispose()` 立即停止新增任务，并返回等待初始化／恢复、已确认移动、设置更新、`InboxQueue.flush()` 和状态存储队列完成的 Promise；每个初始化等待点后检查卸载状态，卸载后不再注册宿主事件或编辑器扩展。
+
+屏障不等待无法中止的网络传输。卸载后晚到的响应不再结算旧实例用量，已预留请求保持 unknown；已经开始的额度写入仍由存储队列排空。新实例可正常启动，旧响应不会用过期用量快照覆盖新实例。运行中实例的逻辑超时仍不释放实际网络名额。
+
+## 宿主验证边界
+
+`MoveHost.referencesSafe` 返回 true、false 或具体拒绝原因。只有运行时类型保护后的 `vault.getConfig('alwaysUpdateLinks') === true` 才允许依赖宿主改写路径引用；配置未知时使用保守检查。移动后按先前记录的链接类别和序号复核入链与出链解析，最多等待约 1 秒；失败保留文件现状并进入 review，不自动反向写回。
+
+Obsidian 1.13.7 合成库已验证目录选择不冻结、带入出链移动及两条链接更新／撤销、顶部提示条移动／撤销，以及本地模拟 HTTP 后两条补链的单次原生 Undo。该证据仅覆盖这些场景：最低支持版本 1.11.4、全部私有语法、同步／外部并发编辑、本地真实模型和不同服务的推荐质量未据此验证。详细宿主证据由 [验证记录](validation.md) 维护，工程端口不扩大自动写入权限。
 
 ## 开发命令和交付
 

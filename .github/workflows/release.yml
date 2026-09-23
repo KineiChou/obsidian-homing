@@ -1,0 +1,63 @@
+name: Prepare release
+
+on:
+  push:
+    tags:
+      - '[0-9]*.[0-9]*.[0-9]*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.21.1'
+          cache: npm
+      - name: Verify release versions
+        run: node scripts/verify-release.mjs "$RELEASE_TAG"
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+      - run: npm install --global npm@11.6.2
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-release
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            main.js
+            manifest.json
+            styles.css
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: plugin-release
+          path: assets
+      - name: Create draft preview release
+        run: >-
+          gh release create "$RELEASE_TAG"
+          assets/main.js assets/manifest.json assets/styles.css
+          --repo "$RELEASE_REPOSITORY" --verify-tag
+          --title "$RELEASE_TAG" --draft --prerelease
+          --notes "Development preview. Review host validation and release requirements before publication."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_REPOSITORY: ${{ github.repository }}

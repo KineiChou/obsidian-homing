@@ -1,8 +1,21 @@
 import { OrganizerError } from './core/errors';
 import { safePath } from './core/paths';
 
+export type DecisionProvider = 'jev' | 'openai-compatible' | 'anthropic';
+export const PROVIDER_DEFAULTS = {
+  jev: { endpoint: 'https://api.typesafe.ai/v1', modelId: 'jev-1.13.0', name: 'TypeSafe Jev' },
+  'openai-compatible': { endpoint: 'https://api.openai.com/v1', modelId: 'gpt-4.1-mini', name: 'OpenAI compatible' },
+  anthropic: { endpoint: 'https://api.anthropic.com/v1', modelId: 'claude-sonnet-4-6', name: 'Anthropic' },
+} as const;
+export function validateEndpoint(endpoint: string): string {
+  try { const url = new URL(endpoint); if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) return fail(); return url.toString().replace(/\/$/, ''); } catch { return fail(); }
+}
 export interface FolderRule { readonly path: string; readonly purpose: string; readonly acceptsNotes: boolean; readonly subtreeRules: readonly string[] }
 export interface OrganizerSettings {
+  readonly provider: DecisionProvider;
+  readonly endpoint: string;
+  readonly longNoteStrategy: 'excerpt' | 'full';
+  readonly folderProfilesEnabled: boolean;
   readonly inbox: string;
   readonly includeSubfolders: boolean;
   readonly secretName: string;
@@ -16,13 +29,14 @@ export interface OrganizerSettings {
   readonly modelId: string;
 }
 export const DEFAULT_SETTINGS: OrganizerSettings = {
+  provider: 'jev', endpoint: PROVIDER_DEFAULTS.jev.endpoint, longNoteStrategy: 'excerpt', folderProfilesEnabled: false,
   inbox: '', includeSubfolders: true, secretName: '', autoFiling: true, autoLinks: false,
   linkScope: 'vault', excludedPaths: [], excludedDestinations: [], folderRules: [],
   dailyRequestLimit: 100, modelId: 'jev-1.13.0',
 };
 
 export function parseSettings(value: unknown): OrganizerSettings {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new OrganizerError('invalid-settings', '设置无法读取，请先恢复有效的配置文件。');
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new OrganizerError('invalid-settings', 'error.settingsUnreadable');
   const v = value as Record<string, unknown>;
   const string = (key: string, fallback: string) => v[key] === undefined ? fallback : typeof v[key] === 'string' ? v[key] : fail();
   const boolean = (key: string, fallback: boolean) => v[key] === undefined ? fallback : typeof v[key] === 'boolean' ? v[key] : fail();
@@ -43,13 +57,20 @@ export function parseSettings(value: unknown): OrganizerSettings {
   });
   const linkScope = v.linkScope ?? 'vault';
   if (linkScope !== 'vault' && linkScope !== 'inbox') return fail();
-  const modelId = string('modelId', DEFAULT_SETTINGS.modelId);
-  if (modelId !== DEFAULT_SETTINGS.modelId) return fail();
+  const provider = v.provider ?? 'jev';
+  if (provider !== 'jev' && provider !== 'openai-compatible' && provider !== 'anthropic') return fail();
+  const modelId = string('modelId', PROVIDER_DEFAULTS[provider].modelId);
+  if (!modelId.trim() || modelId.length > 200 || (provider === 'jev' && modelId !== DEFAULT_SETTINGS.modelId)) return fail();
+  const endpoint = validateEndpoint(string('endpoint', PROVIDER_DEFAULTS[provider].endpoint));
+  if (provider === 'jev' && endpoint !== PROVIDER_DEFAULTS.jev.endpoint) return fail();
+  const longNoteStrategy = v.longNoteStrategy ?? 'excerpt';
+  if (longNoteStrategy !== 'excerpt' && longNoteStrategy !== 'full') return fail();
   return {
+    provider, endpoint, longNoteStrategy, folderProfilesEnabled: boolean('folderProfilesEnabled', false),
     inbox: safePath(string('inbox', ''), true), secretName: string('secretName', ''),
     includeSubfolders: boolean('includeSubfolders', true), autoFiling: boolean('autoFiling', true), autoLinks: boolean('autoLinks', false),
     linkScope, excludedPaths: paths('excludedPaths'), excludedDestinations: paths('excludedDestinations'), folderRules,
     dailyRequestLimit: Number(limit), modelId,
   };
 }
-function fail(): never { throw new OrganizerError('invalid-settings', '设置格式无效，原始配置已保留。'); }
+function fail(): never { throw new OrganizerError('invalid-settings', 'error.settingsInvalid'); }

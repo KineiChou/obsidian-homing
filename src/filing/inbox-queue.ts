@@ -1,7 +1,7 @@
 import { Emitter } from '../core/events';
-import { messageFor } from '../core/errors';
+import { OrganizerError, messageFor } from '../core/errors';
 import { within } from '../core/paths';
-import type { FilingEntry, FilingStatus, InboxQueue, InboxQueueDependencies, PersistedFilingEntry } from './types';
+import type { FilingEntry, FilingProposal, FilingStatus, InboxQueue, InboxQueueDependencies, PersistedFilingEntry } from './types';
 
 interface Pending { readonly token: object; readonly due: number; readonly automatic: boolean }
 export class StableInboxQueue implements InboxQueue {
@@ -11,13 +11,23 @@ export class StableInboxQueue implements InboxQueue {
   private readonly events = new Emitter();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private stopped = false;
+  private running = false;
   private persistence: Promise<void> = Promise.resolve();
   constructor(private readonly deps: InboxQueueDependencies) {}
   entries(): readonly FilingEntry[] { return structuredClone([...this.items.values()]); }
   subscribe(listener: () => void): () => void { return this.events.subscribe(listener); }
-  restore(entries: readonly PersistedFilingEntry[]): void {
-    for (const entry of entries) if (this.deps.eligible(entry.path)) this.items.set(entry.path, { path: entry.path, status: entry.status === 'ignored' ? 'ignored' : 'waiting', updatedAt: Date.now(), message: null });
-    this.events.emit();
+  async restore(entries: readonly PersistedFilingEntry[]): Promise<void> {
+    await Promise.all(entries.map(async entry => {
+      if (this.stopped || !this.deps.eligible(entry.path) || this.items.has(entry.path)) return;
+      const token = {}; this.versions.set(entry.path, token);
+      this.items.set(entry.path, { path: entry.path, status: entry.status === 'ignored' ? 'ignored' : 'waiting', updatedAt: Date.now(), message: null });
+      if (entry.status === 'ignored' || !entry.proposal || !this.deps.restoreProposal) return;
+      let proposal: FilingProposal | null = null;
+      try { proposal = await this.deps.restoreProposal(entry.path, entry.proposal); } catch { /* Invalid or unavailable sources remain waiting. */ }
+      if (this.stopped || this.versions.get(entry.path) !== token || !this.deps.eligible(entry.path)) return;
+      if (proposal) this.items.set(entry.path, { path: entry.path, status: proposal.selected === null ? 'unassigned' : 'ready', proposal, updatedAt: Date.now(), message: null });
+    }));
+    if (!this.stopped) this.events.emit();
   }
   touch(path: string, automatic: boolean): void {
     if (this.stopped) return;
@@ -54,21 +64,30 @@ export class StableInboxQueue implements InboxQueue {
     this.items.set(path, { path, status, updatedAt: Date.now(), message: message ?? null, ...(moveRecordId ? { moveRecordId } : {}) });
     this.changed(); this.arm();
   }
-  invalidate(): void {
+  invalidate(preserve?: (proposal: FilingProposal) => FilingProposal | null): void {
     for (const [path, entry] of this.items) {
+      const needsAnalysis = Boolean(entry.proposal) || entry.status === 'analyzing' || this.pending.has(path);
       this.cancel(path);
       if (!this.deps.eligible(path)) this.items.delete(path);
-      else if (!['ignored', 'done', 'review', 'moving'].includes(entry.status)) this.items.set(path, { path, status: 'waiting', updatedAt: Date.now(), message: null });
+      else if (!['ignored', 'done', 'review', 'moving'].includes(entry.status)) {
+        const proposal = entry.proposal && preserve?.(entry.proposal);
+        if (proposal) this.items.set(path, { ...entry, proposal, status: proposal.selected === null ? 'unassigned' : 'ready' });
+        else {
+          this.items.set(path, { path, status: 'waiting', updatedAt: Date.now(), message: null });
+          if (needsAnalysis && this.deps.automaticEnabled()) this.schedule(path, true, Date.now() + (this.deps.stableMs ?? 10000));
+        }
+      }
     }
     this.changed(); this.arm();
   }
+  flush(): Promise<void> { return this.persistence; }
   dispose(): void { this.stopped = true; if (this.timer !== undefined) clearTimeout(this.timer); this.pending.clear(); this.versions.clear(); this.events.clear(); }
   private cancel(path: string): void { this.pending.delete(path); this.versions.delete(path); }
   private schedule(path: string, automatic: boolean, due: number): void { const token = {}; this.versions.set(path, token); this.pending.set(path, { token, automatic, due }); this.arm(); }
   private arm(): void {
     if (this.timer !== undefined) clearTimeout(this.timer);
     this.timer = undefined;
-    if (this.stopped || this.pending.size === 0) return;
+    if (this.stopped || this.running || this.pending.size === 0) return;
     let next = Infinity; for (const item of this.pending.values()) next = Math.min(next, item.due);
     this.timer = setTimeout(() => { this.timer = undefined; this.tick(); }, Math.max(0, next - Date.now()));
   }
@@ -78,7 +97,9 @@ export class StableInboxQueue implements InboxQueue {
       if (!this.deps.eligible(path) || (work.automatic && !this.deps.automaticEnabled())) { this.cancel(path); continue; }
       if (work.automatic && this.deps.isEditing(path)) { this.pending.set(path, { ...work, due: Date.now() + Math.max(1, this.deps.stableMs ?? 10000) }); continue; }
       this.pending.delete(path);
-      void this.run(path, work);
+      this.running = true;
+      void this.run(path, work).finally(() => { this.running = false; this.arm(); });
+      break;
     }
     this.arm();
   }
@@ -91,17 +112,20 @@ export class StableInboxQueue implements InboxQueue {
       this.items.set(path, { path, status: proposal.selected === null ? 'unassigned' : 'ready', proposal, updatedAt: Date.now(), message: null });
     } catch (error) {
       if (!current()) return;
-      this.items.set(path, { path, status: 'failed', updatedAt: Date.now(), message: messageFor(error) });
+      this.items.set(path, { path, status: error instanceof OrganizerError && error.code === 'budget' ? 'waiting' : 'failed', updatedAt: Date.now(), message: messageFor(error) });
     }
     if (current()) this.changed();
   }
   private changed(): void {
     if (this.stopped) return;
     this.events.emit();
-    const entries: PersistedFilingEntry[] = [...this.items.values()].filter(item => item.status !== 'done').map(item => ({ path: item.path, status: item.status === 'ignored' ? 'ignored' : 'pending' }));
+    const entries: PersistedFilingEntry[] = [...this.items.values()].filter(item => item.status !== 'done').map(item => {
+      const proposal = item.proposal && this.deps.encodeProposal?.(item.proposal);
+      return { path: item.path, status: item.status === 'ignored' ? 'ignored' : 'pending', ...(proposal ? { proposal } : {}) };
+    });
     this.persistence = this.persistence.then(() => this.deps.persist(entries)).catch(() => {
       if (this.stopped) return;
-      for (const [path, entry] of this.items) this.items.set(path, { ...entry, message: '待办保存失败，请检查存储后重试。' });
+      for (const [path, entry] of this.items) this.items.set(path, { ...entry, message: 'error.queueStorage' });
       this.events.emit();
     });
   }
