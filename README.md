@@ -45,5 +45,6 @@ npm run package
 - [目录分类算法](docs/folder-classification.md)
 - [Jev 接入](docs/jev-integration.md)
 - [双链补齐](docs/link-suggestions.md)与[轻量索引方案比较](docs/link-indexing.md)
+- [0.1.2 审阅与交接](docs/review-2026-09-24.md)
 
 工作名称为 Note Organizer；公开发布名称与许可证尚未确定。
