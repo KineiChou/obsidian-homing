@@ -3,6 +3,8 @@ import { assertCurrent, byteLength, packQuestions, UNASSIGNED } from '../jev/req
 import type { ChoiceQuestion, DecisionContext, DecisionScheduler, JsonValue, RequestScope } from '../jev/types';
 import type { LinkInput, LinkProposal, LinkRecommender } from './types';
 
+import { fold } from './text-boundaries';
+
 interface CachedSelection { selected: number | null; bytes: number }
 const MAX_ENTRIES = 256;
 const MAX_BYTES = 2 * 1024 * 1024;
@@ -13,7 +15,7 @@ export class JevLinkRecommender implements LinkRecommender {
   async propose(inputs: readonly LinkInput[], context: DecisionContext, scope: RequestScope): Promise<readonly LinkProposal[]> {
     assertCurrent(scope);
     if (inputs.length > 256) throw new OrganizerError('limit', '本次链接候选过多，请选择更小的文字范围。');
-    const keys = inputs.map(input => JSON.stringify({ input, settingsRevision: context.settingsRevision, promptRevision: context.promptRevision, modelId: context.modelId }));
+    const keys = inputs.map(input => JSON.stringify({ mention: fold(input.anchor.originalText), context: input.anchor.contextText, sourcePath: input.anchor.sourcePath, candidates: input.candidates, settingsRevision: context.settingsRevision, promptRevision: context.promptRevision, modelId: context.modelId }));
     const selections = new Map<number, number | null>();
     const questions: ChoiceQuestion[] = [];
     for (let index = 0; index < inputs.length; index++) {

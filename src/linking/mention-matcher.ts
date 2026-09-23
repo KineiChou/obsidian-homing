@@ -26,8 +26,17 @@ export class LocalMentionMatcher implements MentionMatcher {
       if (!allowedRange) continue;
       const localFrom = match.from - snapshot.contextFrom, localTo = match.to - snapshot.contextFrom;
       if (!boundaries.has(localTo) || !wordBoundary(snapshot.text, localFrom, localTo)) continue;
-      const contextFrom = Math.max(snapshot.contextFrom, allowedRange.from);
-      const contextTo = Math.min(snapshot.contextFrom + text.length, allowedRange.to);
+      let contextFrom = Math.max(snapshot.contextFrom, allowedRange.from);
+      let contextTo = Math.min(snapshot.contextFrom + text.length, allowedRange.to);
+      // Only the containing sentence is decisive; unrelated sentences cannot invalidate it.
+      const before = text.slice(contextFrom - snapshot.contextFrom, localFrom);
+      const delimiters = [...before.matchAll(/[。！？.!?\n]/g)];
+      const last = delimiters[delimiters.length - 1];
+      if (last) contextFrom += last.index! + last[0].length;
+      const after = text.slice(localTo, contextTo - snapshot.contextFrom);
+      const boundary = after.search(/[。！？.!?\n]/);
+      if (boundary >= 0) contextTo = match.to + boundary + 1;
+      if (snapshot.dirtyRanges && !snapshot.dirtyRanges.some(range => range.from <= contextTo && range.to >= contextFrom)) continue;
       const contextText = text.slice(contextFrom - snapshot.contextFrom, contextTo - snapshot.contextFrom);
       const context = tokens(contextText.slice(0, match.from - contextFrom) + ' ' + contextText.slice(match.to - contextFrom));
       for (const token of tokens(match.text)) context.delete(token);

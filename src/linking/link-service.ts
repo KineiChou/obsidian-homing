@@ -1,5 +1,5 @@
 import { OrganizerError } from '../core/errors';
-import type { EditorPort, LinkHost, LinkPlan, LinkProposal, LinkService, LinkTarget, MetadataIndex, TextAnchor } from './types';
+import type { EditorPort, LinkConfirmation, LinkHost, LinkPlan, LinkProposal, LinkService, LinkTarget, MetadataIndex, TextAnchor } from './types';
 import { graphemeBoundaries } from './text-boundaries';
 
 export class ConfirmedLinkService implements LinkService {
@@ -27,18 +27,53 @@ export class ConfirmedLinkService implements LinkService {
   }
 
   confirm(planId: string): void {
-    const plan = this.plans.get(planId);
-    if (!plan) this.stale();
-    this.plans.delete(planId);
-    if (plan.catalogueEpoch !== this.index.epoch || plan.settingsRevision !== this.host.settingsRevision()) this.stale();
-    const target = this.index.get(plan.target.noteId);
-    if (!target || !this.sameTarget(plan.target, target)) this.stale();
-    const editor = this.validate(plan.anchor, target);
-    if (this.host.generateLink(target, plan.anchor.sourcePath, plan.anchor.originalText) !== plan.replacement || !this.host.resolvesTo(plan.replacement, plan.anchor.sourcePath, target)) {
-      throw new OrganizerError('unsafe', '链接目标已改变，请重新查找。');
+    const result = this.confirmMany([planId]);
+    if (result.failures.length) throw result.failures[0]!.error;
+  }
+
+  confirmMany(planIds: readonly string[]): LinkConfirmation {
+    const failures: { planId: string; error: OrganizerError }[] = [];
+    const accepted: { plan: LinkPlan; editor: EditorPort }[] = [];
+    const seen = new Set<string>();
+    for (const planId of planIds) {
+      try {
+        const plan = this.plans.get(planId);
+        if (!plan || seen.has(planId)) this.stale();
+        seen.add(planId);
+        this.plans.delete(planId);
+        if (plan.catalogueEpoch !== this.index.epoch || plan.settingsRevision !== this.host.settingsRevision()) this.stale();
+        const target = this.index.get(plan.target.noteId);
+        if (!target || !this.sameTarget(plan.target, target)) this.stale();
+        const editor = this.validate(plan.anchor, target);
+        if (accepted.some(item => item.plan.anchor.editorSessionId !== plan.anchor.editorSessionId ||
+            (item.plan.anchor.from < plan.anchor.to && plan.anchor.from < item.plan.anchor.to))) this.stale();
+        if (this.host.generateLink(target, plan.anchor.sourcePath, plan.anchor.originalText) !== plan.replacement ||
+            !this.host.resolvesTo(plan.replacement, plan.anchor.sourcePath, target)) {
+          throw new OrganizerError('unsafe', '链接目标已改变，请重新查找。');
+        }
+        accepted.push({ plan, editor });
+      } catch (error) {
+        failures.push({ planId, error: error instanceof OrganizerError ? error : new OrganizerError('unsafe', '无法安全插入链接。') });
+      }
     }
-    editor.replace(plan.anchor.from, plan.anchor.to, plan.replacement);
-    editor.suppress(plan.anchor, target.noteId);
+    if (!accepted.length) return { appliedPlanIds: [], failures };
+    const editor = accepted[0]!.editor;
+    try {
+      editor.replaceMany(accepted.map(({ plan }) => ({ from: plan.anchor.from, to: plan.anchor.to, replacement: plan.replacement })));
+      // Insertion positions are expressed in the resulting document, after the atomic edit.
+      let shift = 0;
+      const insertions = [...accepted].sort((a, b) => a.plan.anchor.from - b.plan.anchor.from).map(({ plan }) => {
+        const anchor = { ...plan.anchor, from: plan.anchor.from + shift, to: plan.anchor.from + shift + plan.replacement.length, originalText: plan.replacement };
+        shift += plan.replacement.length - (plan.anchor.to - plan.anchor.from);
+        editor.suppress(anchor, plan.target.noteId);
+        return { anchor: { ...plan.anchor, from: anchor.from }, replacement: plan.replacement, target: plan.target.noteId };
+      });
+      editor.rememberInsertions?.(insertions);
+      return { appliedPlanIds: accepted.map(item => item.plan.id), failures };
+    } catch (error) {
+      for (const { plan } of accepted) failures.push({ planId: plan.id, error: error instanceof OrganizerError ? error : new OrganizerError('unsafe', '无法安全插入链接。') });
+      return { appliedPlanIds: [], failures };
+    }
   }
 
   private validate(anchor: TextAnchor, target: LinkTarget): EditorPort {

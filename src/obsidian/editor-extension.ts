@@ -2,14 +2,14 @@ import { editorInfoField } from 'obsidian';
 import { ViewPlugin, type EditorView, type ViewUpdate } from '@codemirror/view';
 import { syntaxTree } from '@codemirror/language';
 import type { Extension } from '@codemirror/state';
-import type { EditorPort, EditorSnapshot, TextAnchor, TextRange } from '../linking/types';
+import type { EditorChange, EditorPort, EditorSnapshot, LinkInsertion, TextAnchor, TextRange } from '../linking/types';
 import { OrganizerError } from '../core/errors';
 
 interface Suppressed { from: number; to: number; text: string; target: number | null }
 export interface EditorBridge {
   identity(path: string): number | null;
   linkedTargets(path: string, text?: string): ReadonlySet<number>;
-  changed(sessionId: string, path: string): void;
+  changed(sessionId: string, path: string, change?: EditorChange): void;
   idle(sessionId: string): void;
 }
 
@@ -44,7 +44,7 @@ export class NoteEditorSession implements EditorPort {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private dirty: TextRange[] = [];
   private suppressions: Suppressed[] = [];
-  private insertion: { from: number; original: string; replacement: string; target: number } | null = null;
+  private insertions: { from: number; original: string; replacement: string; target: number }[] = [];
   private alive = true;
   constructor(private readonly view: EditorView, private readonly bridge: EditorBridge, private readonly focus: () => void) {}
   get path(): string | null { return this.view.state.field(editorInfoField, false)?.file?.path ?? null; }
@@ -61,15 +61,30 @@ export class NoteEditorSession implements EditorPort {
       this.dirty = this.dirty.map(range => ({ from: update.changes.mapPos(range.from, -1), to: update.changes.mapPos(range.to, 1) }));
       update.changes.iterChangedRanges((_from, _to, from, to) => { this.dirty.push({ from, to }); });
       this.dirty = this.dirty.slice(-8);
-      if (this.insertion && update.transactions.some(transaction => transaction.isUserEvent('undo'))) {
-        const previous = this.insertion;
-        const from = update.changes.mapPos(previous.from, -1);
-        if (this.read(from, from + previous.original.length) === previous.original) {
-          this.suppressions.push({ from, to: from + previous.original.length, text: previous.original, target: previous.target });
+      if (update.transactions.some(transaction => transaction.isUserEvent('undo'))) {
+        for (const previous of this.insertions) {
+          const from = update.changes.mapPos(previous.from, -1);
+          if (this.read(from, from + previous.original.length) === previous.original) {
+            this.suppressions.push({ from, to: from + previous.original.length, text: previous.original, target: previous.target });
+          }
         }
-        this.insertion = null;
-      } else if (this.insertion) this.insertion.from = update.changes.mapPos(this.insertion.from, -1);
-      if (this.path) this.bridge.changed(this.id, this.path);
+        this.insertions = [];
+      } else this.insertions = this.insertions.map(record => ({ ...record, from: update.changes.mapPos(record.from, -1) }));
+      const revision = this.revision;
+      if (this.path) this.bridge.changed(this.id, this.path, {
+        dirtyRanges: [...this.dirty],
+        mapAnchor: anchor => {
+          if (anchor.editorSessionId !== this.id || anchor.documentRevision !== revision - 1) return null;
+          let touched = false;
+          update.changes.iterChangedRanges((from, to) => {
+            const end = anchor.contextFrom + anchor.contextText.length;
+            if (from <= end && to >= anchor.contextFrom) touched = true;
+          });
+          if (touched) return null;
+          return { ...anchor, documentRevision: revision, from: update.changes.mapPos(anchor.from, 1),
+            to: update.changes.mapPos(anchor.to, -1), contextFrom: update.changes.mapPos(anchor.contextFrom, 1) };
+        },
+      });
     }
     if (update.docChanged || update.selectionSet || update.focusChanged) this.schedule();
   }
@@ -81,7 +96,7 @@ export class NoteEditorSession implements EditorPort {
       if (this.path) this.bridge.idle(this.id);
     }, 1000);
   }
-  snapshot(): EditorSnapshot | null {
+  snapshot(options?: { dirtyOnly?: boolean }): EditorSnapshot | null {
     const path = this.path, noteId = path ? this.bridge.identity(path) : null;
     if (!this.alive || !path || noteId === null || this.view.composing) return null;
     const selection = this.view.state.selection.main;
@@ -91,7 +106,9 @@ export class NoteEditorSession implements EditorPort {
     from = Math.max(0, to - 1200);
     if (from > 0 && /[\uDC00-\uDFFF]/.test(this.read(from, from + 1))) from++;
     if (to < this.view.state.doc.length && /[\uD800-\uDBFF]/.test(this.read(to - 1, to))) to--;
-    return { sessionId: this.id, noteId, path, revision: this.revision, contextFrom: from, text: this.read(from, to), allowedRanges: this.allowedRanges(from, to), linkedNoteIds: this.bridge.linkedTargets(path) };
+    const dirtyRanges = options?.dirtyOnly ? [...this.dirty] : undefined;
+    if (options?.dirtyOnly) this.dirty = [];
+    return { ...(dirtyRanges ? { dirtyRanges } : {}), sessionId: this.id, noteId, path, revision: this.revision, contextFrom: from, text: this.read(from, to), allowedRanges: this.allowedRanges(from, to), linkedNoteIds: this.bridge.linkedTargets(path) };
   }
   private allowedRanges(from: number, to: number): TextRange[] {
     const tree = syntaxTree(this.view.state);
@@ -124,16 +141,25 @@ export class NoteEditorSession implements EditorPort {
   read(from: number, to: number): string { return this.view.state.doc.sliceString(Math.max(0, from), Math.min(this.view.state.doc.length, to)); }
   allows(from: number, to: number): boolean { return this.alive && !this.view.composing && this.allowedRanges(from, to).some(range => range.from <= from && range.to >= to); }
   replace(from: number, to: number, replacement: string): void {
-    const info = this.view.state.field(editorInfoField, false);
-    if (!info?.editor || !this.allows(from, to)) throw new OrganizerError('stale', '文字已改变，请重新查找链接。');
-    info.editor.transaction({ changes: [{ from: info.editor.offsetToPos(from), to: info.editor.offsetToPos(to), text: replacement }] }, 'note-organizer');
+    this.replaceMany([{ from, to, replacement }]);
   }
-  rememberInsertion(anchor: TextAnchor, replacement: string, target: number): void { this.insertion = { from: anchor.from, original: anchor.originalText, replacement, target }; }
+  replaceMany(changes: readonly { from: number; to: number; replacement: string }[]): void {
+    const info = this.view.state.field(editorInfoField, false);
+    const sorted = [...changes].sort((a, b) => a.from - b.from);
+    if (!info?.editor || sorted.some((change, index) => !this.allows(change.from, change.to) ||
+        (index > 0 && sorted[index - 1]!.to > change.from))) throw new OrganizerError('stale', '文字已改变，请重新查找链接。');
+    const editor = info.editor;
+    editor.transaction({ changes: sorted.map(change => ({ from: editor.offsetToPos(change.from), to: editor.offsetToPos(change.to), text: change.replacement })) }, 'note-organizer');
+  }
+  rememberInsertion(anchor: TextAnchor, replacement: string, target: number): void { this.rememberInsertions([{ anchor, replacement, target }]); }
+  rememberInsertions(insertions: readonly LinkInsertion[]): void {
+    this.insertions = insertions.map(({ anchor, replacement, target }) => ({ from: anchor.from, original: anchor.originalText, replacement, target }));
+  }
   suppress(anchor: TextAnchor, target: number | null): void { this.suppressions.push({ from: anchor.from, to: anchor.to, text: anchor.originalText, target }); this.suppressions = this.suppressions.slice(-256); }
   suppressed(anchor: TextAnchor): boolean { return this.suppressions.some(record => record.from === anchor.from && record.to === anchor.to && record.text === anchor.originalText); }
   clearSuppressions(): void { this.suppressions = []; this.dirty = []; }
   forConfirmation(): EditorPort {
-    return { snapshot: () => { const snapshot = this.snapshot(); return snapshot ? { ...snapshot, linkedNoteIds: this.bridge.linkedTargets(snapshot.path, this.view.state.doc.toString()) } : null; }, read: (a, b) => this.read(a, b), allows: (a, b) => this.allows(a, b), replace: (a, b, text) => this.replace(a, b, text), suppress: (anchor, target) => this.suppress(anchor, target) };
+    return { snapshot: () => { const snapshot = this.snapshot(); return snapshot ? { ...snapshot, linkedNoteIds: this.bridge.linkedTargets(snapshot.path, this.view.state.doc.toString()) } : null; }, read: (a, b) => this.read(a, b), allows: (a, b) => this.allows(a, b), replace: (a, b, text) => this.replace(a, b, text), replaceMany: changes => this.replaceMany(changes), rememberInsertions: insertions => this.rememberInsertions(insertions), suppress: (anchor, target) => this.suppress(anchor, target) };
   }
   destroy(): void { this.alive = false; clearTimeout(this.timer); this.suppressions = []; }
 }
