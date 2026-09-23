@@ -44,7 +44,7 @@ function parseRecord(value: unknown): MoveRecord {
 function parseUsage(value: unknown): DailyUsage {
   const v = object(value);
   if (typeof v.day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v.day) || !integer(v.requests) || !integer(v.inputTokens) || !integer(v.unknownRequests) || v.unknownRequests > v.requests) throw storageError();
-  return { day: v.day, requests: v.requests, inputTokens: v.inputTokens, unknownRequests: v.unknownRequests };
+  return { day: v.day, requests: v.requests, inputTokens: v.inputTokens, unknownRequests: v.unknownRequests, automaticLinkRequests: v.automaticLinkRequests === undefined ? 0 : integer(v.automaticLinkRequests) && v.automaticLinkRequests <= v.requests ? v.automaticLinkRequests : (() => { throw storageError(); })() };
 }
 export class PluginStateStore implements StateStore {
   private state: PersistedState = { schemaVersion: 2, settings: structuredClone(DEFAULT_SETTINGS), filingQueue: [], moveJournal: [] };
@@ -64,11 +64,12 @@ export class PluginStateStore implements StateStore {
       const completed = records.filter(item => item.status !== 'intent' && item.status !== 'review').slice(-100);
       return { ...current, moveJournal: [...unfinished, ...completed] };
     }) };
-    this.usage = { read: () => this.readUsage(), reserve: limit => this.updateUsage(() => {
+    this.usage = { read: () => this.readUsage(), reserve: (limit, policy) => this.updateUsage(() => {
       if (!Number.isSafeInteger(limit) || limit < 1) throw new OrganizerError('budget', '每日分析额度无效。');
       const current = this.readUsage();
       if (current.requests >= limit) throw new OrganizerError('budget', '今日分析请求已达到上限。');
-      this.saveUsage({ ...current, requests: current.requests + 1, unknownRequests: current.unknownRequests + 1 });
+      if (policy && (!integer(policy.automaticLinkLimit) || (current.automaticLinkRequests ?? 0) >= policy.automaticLinkLimit)) throw new OrganizerError('budget', '今日自动链接额度已用完，仍可分析归档或手动添加链接。');
+      this.saveUsage({ ...current, automaticLinkRequests: (current.automaticLinkRequests ?? 0) + (policy ? 1 : 0), requests: current.requests + 1, unknownRequests: current.unknownRequests + 1 });
       this.reservations.push(current.day);
     }), settle: tokens => this.updateUsage(() => {
       if (tokens !== null && !integer(tokens)) throw storageError();
@@ -112,9 +113,9 @@ export class PluginStateStore implements StateStore {
   }
   private day(): string { const date = this.now(); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`; }
   private readUsage(): DailyUsage {
-    if (!this.usageValue) { const value = this.port.loadLocal(USAGE); this.usageValue = value == null ? { day: this.day(), requests: 0, inputTokens: 0, unknownRequests: 0 } : parseUsage(value); }
+    if (!this.usageValue) { const value = this.port.loadLocal(USAGE); this.usageValue = value == null ? { day: this.day(), requests: 0, inputTokens: 0, unknownRequests: 0, automaticLinkRequests: 0 } : parseUsage(value); }
     // A backwards clock must not restore a fresh quota for an already used day.
-    if (this.day() > this.usageValue.day) this.usageValue = { day: this.day(), requests: 0, inputTokens: 0, unknownRequests: 0 };
+    if (this.day() > this.usageValue.day) this.usageValue = { day: this.day(), requests: 0, inputTokens: 0, unknownRequests: 0, automaticLinkRequests: 0 };
     return { ...this.usageValue };
   }
   private saveUsage(value: DailyUsage): void { try { this.port.saveLocal(USAGE, value); this.usageValue = value; } catch { throw storageError(); } }

@@ -1,7 +1,7 @@
 import { Plugin, TFile, TFolder, requestUrl, parseLinktext } from 'obsidian';
 import { Emitter } from '../core/events';
 import { messageFor, OrganizerError } from '../core/errors';
-import { within } from '../core/paths';
+import { contentHash, safePath, within } from '../core/paths';
 import { DEFAULT_SETTINGS, parseSettings, type OrganizerSettings } from '../settings';
 import { MemoryFolderCatalog } from '../folders/catalog';
 import { PluginStateStore } from '../storage/state-store';
@@ -15,10 +15,11 @@ import { LocalMentionMatcher } from '../linking/mention-matcher';
 import { JevLinkRecommender } from '../linking/recommender';
 import { ConfirmedLinkService } from '../linking/link-service';
 import type { OrganizerController, ReviewState } from '../ui/types';
-import type { LinkPlan, LinkProposal } from '../linking/types';
-import type { FilingEntry, MovePlan } from '../filing/types';
+import type { LinkConfirmation, LinkPlan, LinkProposal } from '../linking/types';
+import type { FilingEntry, FilingProposal, PersistedFilingProposal, MovePlan } from '../filing/types';
 import { EditorSessions } from './editor-extension';
 import { VaultAdapter } from './vault-adapter';
+import { filingSettingsKey, linkSettingsKey } from './settings-impact';
 
 export class ObsidianOrganizer implements OrganizerController {
   readonly events = new Emitter();
@@ -36,7 +37,9 @@ export class ObsidianOrganizer implements OrganizerController {
   private filing: readonly FilingEntry[] = [];
   private configuration: OrganizerSettings = structuredClone(DEFAULT_SETTINGS);
   private settingsWrite: Promise<void> = Promise.resolve();
-  private revision = 0;
+  private filingRevision = 0;
+  private linkRevision = 0;
+  private filingFingerprint = '';
   private generation = 0;
   private ready = false;
   private disposed = false;
@@ -47,13 +50,16 @@ export class ObsidianOrganizer implements OrganizerController {
     this.vault = new VaultAdapter(plugin.app, this.index, () => this.settings());
     this.editors = new EditorSessions({
       identity: path => this.vault.id(path), linkedTargets: (path, text) => this.vault.linkedTargets(path, text),
-      changed: (session, path) => {
+      changed: (session, path, change) => {
         this.scheduler?.cancel('link:' + session); this.scheduler?.cancel('filing:' + path);
         const file = this.vault.file(path); if (file) this.vault.touch(file);
-        const previous = this.links.length; this.links = this.links.filter(link => link.input.anchor.editorSessionId !== session);
-        let changed = previous !== this.links.length || this.message !== null;
-        this.filing = this.filing.map(entry => { if (entry.path !== path || !entry.proposal) return entry; changed = true; return { path: entry.path, status: 'waiting', updatedAt: entry.updatedAt, message: '内容已改变，等待保存后重新分析。' }; });
-        this.message = null; if (changed) this.events.emit();
+        this.links = this.links.flatMap(link => {
+          if (link.input.anchor.editorSessionId !== session) return [link];
+          const anchor = change?.mapAnchor(link.input.anchor);
+          return anchor ? [{ ...link, input: { ...link.input, anchor } }] : [];
+        });
+        if (this.queue?.entries().some(entry => entry.path === path && entry.proposal)) this.queue.mark(path, 'waiting', '内容已改变，等待保存后重新分析。');
+        this.message = null; this.events.emit();
       },
       idle: session => { if (this.enabled() && this.settings().autoLinks) void this.analyzeLinks(session, true); },
     });
@@ -61,6 +67,7 @@ export class ObsidianOrganizer implements OrganizerController {
   async initialize(): Promise<void> {
     await this.store.load();
     this.configuration = this.store.snapshot().settings;
+    this.filingFingerprint = await contentHash(filingSettingsKey(this.configuration));
     const client = new JevClient({ post: async (url, headers, body) => {
       try { const response = await requestUrl({ url, method: 'POST', headers: { ...headers }, body, throw: false }); let json: unknown = null; try { json = response.json; } catch { /* HTTP status remains authoritative for non-JSON failures. */ } return { status: response.status, headers: response.headers, json }; }
       catch { throw new OrganizerError('network', '暂时无法连接 Jev，请稍后重试。'); }
@@ -69,17 +76,18 @@ export class ObsidianOrganizer implements OrganizerController {
     const classifier = new MixedDepthClassifier(this.scheduler);
     this.queue = new StableInboxQueue({
       eligible: path => this.vault.eligible(path), automaticEnabled: () => this.enabled() && this.settings().autoFiling,
+      encodeProposal: proposal => this.encodeProposal(proposal), restoreProposal: (path, proposal) => this.restoreProposal(path, proposal),
       isEditing: path => this.editors.editing(path), persist: entries => this.store.updateQueue(entries),
       propose: async (path, automatic, isCurrent) => {
-        const note = await this.vault.note(path, !automatic), folders = this.catalog.snapshot(), settings = this.revision;
-        return classifier.propose(note, folders, this.context(), { key: 'filing:' + path, priority: automatic ? 'filing' : 'manual', automatic, isCurrent: () => !this.disposed && isCurrent() && this.revision === settings && this.vault.revision(path) === note.source.revision && this.catalog.snapshot().revision === folders.revision && this.vault.eligible(path) });
+        const note = await this.vault.note(path, !automatic), folders = this.catalog.snapshot(), settings = this.filingRevision;
+        return classifier.propose(note, folders, this.context(), { key: 'filing:' + path, priority: automatic ? 'filing' : 'manual', automatic, isCurrent: () => !this.disposed && isCurrent() && this.filingRevision === settings && this.vault.revision(path) === note.source.revision && this.catalog.snapshot().revision === folders.revision && this.vault.eligible(path) });
       },
     });
-    this.moves = new ConfirmedMoveService({ source: path => this.vault.source(path), currentPath: id => this.vault.currentPath(id), exists: path => Boolean(this.plugin.app.vault.getAbstractFileByPath(path)), eligible: path => this.vault.eligible(path), referencesSafe: (path, destination) => this.vault.referencesSafe(path, destination), rename: (from, to) => this.vault.rename(from, to), folders: () => this.catalog.snapshot(), settingsRevision: () => this.revision }, this.store.journal);
+    this.moves = new ConfirmedMoveService({ source: path => this.vault.source(path), currentPath: id => this.vault.currentPath(id), exists: path => Boolean(this.plugin.app.vault.getAbstractFileByPath(path)), eligible: path => this.vault.eligible(path), referencesSafe: (path, destination) => this.vault.referencesSafe(path, destination), rename: (from, to) => this.vault.rename(from, to), folders: () => this.catalog.snapshot(), settingsRevision: () => this.filingRevision }, this.store.journal);
     this.recommender = new JevLinkRecommender(this.scheduler);
     const app = this.plugin.app;
     this.linker = new ConfirmedLinkService(this.index, {
-      editor: id => this.editors.get(id)?.forConfirmation(), settingsRevision: () => this.revision,
+      editor: id => this.editors.get(id)?.forConfirmation(), settingsRevision: () => this.linkRevision,
       allowed: target => this.vault.allowed(target.path),
       generateLink: (target, source, alias) => { const file = this.vault.file(target.path); if (!file) throw new OrganizerError('missing', '链接目标已不存在。'); return app.fileManager.generateMarkdownLink(file, source, undefined, alias); },
       resolvesTo: (link, source, target) => {
@@ -90,7 +98,8 @@ export class ObsidianOrganizer implements OrganizerController {
       },
     });
     this.refreshFolders();
-    this.queue.restore(this.store.snapshot().filingQueue);
+    await this.queue.restore(this.store.snapshot().filingQueue);
+    await this.queue.restore(this.plugin.app.vault.getMarkdownFiles().filter(file => this.vault.eligible(file.path)).map(file => ({ path: file.path, status: 'pending' as const })));
     this.filing = this.queue.entries();
     await this.moves.recover();
     this.plugin.register(this.queue.subscribe(() => { this.filing = this.queue.entries(); this.events.emit(); }));
@@ -117,7 +126,7 @@ export class ObsidianOrganizer implements OrganizerController {
       else { this.vault.removeUnder(file.path); for (const entry of this.queue.entries()) if (within(entry.path, file.path)) this.queue.remove(entry.path); this.refreshFolders(); }
       this.invalidateLinks();
     }));
-    this.plugin.registerEvent(workspace.on('file-open', file => { if (!file) return; this.activePath = file.path; this.links = []; this.events.emit(); }));
+    this.plugin.registerEvent(workspace.on('file-open', file => { if (!file) return; this.activePath = file.path; this.events.emit(); }));
     this.activePath = workspace.getActiveFile()?.path ?? null;
     void this.buildIndex();
   }
@@ -136,23 +145,57 @@ export class ObsidianOrganizer implements OrganizerController {
     }
     if (!this.disposed && generation === this.generation) { this.ready = true; this.events.emit(); }
   }
-  private refreshFolders(): void { this.catalog.refresh(this.vault.allFolders(), this.settings()); this.queue?.invalidate(); this.events.emit(); }
+  private refreshFolders(): void {
+    const revision = this.catalog.snapshot().revision;
+    this.catalog.refresh(this.vault.allFolders(), this.settings());
+    if (this.catalog.snapshot().revision !== revision) this.queue?.invalidate(proposal => this.preserveProposal(proposal));
+    this.events.emit();
+  }
+  private preserveProposal(proposal: FilingProposal): FilingProposal | null {
+    const folders = this.catalog.snapshot();
+    if (proposal.selected === null || !folders.targets.some(target => target.id === proposal.selected) || proposal.context.settingsRevision !== this.filingRevision) return null;
+    return { ...proposal, foldersRevision: folders.revision, ranked: proposal.ranked.filter(item => folders.targets.some(target => target.id === item.targetId)) };
+  }
+  private encodeProposal(proposal: FilingProposal): PersistedFilingProposal | undefined {
+    const folders = this.catalog.snapshot().targets;
+    const selectedPath = proposal.selected === null ? null : folders.find(target => target.id === proposal.selected)?.path;
+    if (selectedPath === undefined || proposal.context.settingsRevision !== this.filingRevision) return undefined;
+    return { contentHash: proposal.source.contentHash, selectedPath, ranked: proposal.ranked.flatMap(item => { const target = folders.find(target => target.id === item.targetId); return target ? [{ path: target.path, probability: item.probability }] : []; }).slice(0, 3), modelId: proposal.context.modelId, promptRevision: proposal.context.promptRevision, settingsFingerprint: this.filingFingerprint, createdAt: Date.now(), ...(proposal.excerpt ? { excerpt: proposal.excerpt } : {}) };
+  }
+  private async restoreProposal(path: string, saved: PersistedFilingProposal): Promise<FilingProposal | null> {
+    const fingerprint = this.filingFingerprint, revision = this.filingRevision;
+    if (saved.modelId !== this.settings().modelId || saved.promptRevision !== 1 || saved.settingsFingerprint !== fingerprint) return null;
+    const source = await this.vault.source(path), folders = this.catalog.snapshot();
+    if (!source || source.contentHash !== saved.contentHash || fingerprint !== this.filingFingerprint || revision !== this.filingRevision) return null;
+    const target = saved.selectedPath === null ? null : folders.targets.find(target => target.path === saved.selectedPath);
+    if (target === undefined) return null;
+    return { id: crypto.randomUUID(), source, foldersRevision: folders.revision, context: this.context(), selected: target?.id ?? null, ranked: saved.ranked.flatMap(item => { const target = folders.targets.find(target => target.path === item.path); return target ? [{ targetId: target.id, probability: item.probability }] : []; }), ...(saved.excerpt ? { excerpt: saved.excerpt } : {}) };
+  }
   private invalidateLinks(): void {
     const previous = this.links.length;
     this.links = this.links.filter(proposal => proposal.input.catalogueEpoch === this.index.epoch && proposal.input.candidates.every(target => this.index.get(target.noteId)?.revision === target.revision));
     if (previous !== this.links.length) this.events.emit();
   }
-  private context() { return { taskId: crypto.randomUUID(), settingsRevision: this.revision, promptRevision: 1, modelId: this.settings().modelId }; }
+  private context(kind: 'filing' | 'link' = 'filing') { return { taskId: crypto.randomUUID(), settingsRevision: kind === 'filing' ? this.filingRevision : this.linkRevision, promptRevision: 1, modelId: this.settings().modelId }; }
   state(): ReviewState { return { filing: this.filing, links: this.links.filter(link => link.input.anchor.sourcePath === this.activePath), activePath: this.activePath, network: this.scheduler.status(), indexReady: this.ready, message: this.message }; }
   subscribe(listener: () => void) { return this.events.subscribe(listener); }
   settings(): OrganizerSettings { return this.configuration; }
   enabled(): boolean { return this.store.automaticEnabled(); }
-  setEnabled(enabled: boolean): void { this.store.setAutomaticEnabled(enabled); this.queue.invalidate(); this.events.emit(); }
+  setEnabled(enabled: boolean): void { this.store.setAutomaticEnabled(enabled); if (!enabled) this.queue.invalidate(proposal => this.preserveProposal(proposal)); this.events.emit(); }
   saveSettings(patch: Partial<OrganizerSettings>): Promise<void> {
     const update = this.settingsWrite.then(async () => {
       const settings = parseSettings({ ...this.settings(), ...patch });
-      await this.store.updateSettings(settings); this.configuration = this.store.snapshot().settings; this.revision++; this.links = []; this.scheduler.setPaused(false);
-      this.refreshFolders(); this.index.clear(); void this.buildIndex();
+      const before = this.settings();
+      const filingChanged = filingSettingsKey(before) !== filingSettingsKey(settings), linksChanged = linkSettingsKey(before) !== linkSettingsKey(settings);
+      const fingerprint = filingChanged ? await contentHash(filingSettingsKey(settings)) : this.filingFingerprint;
+      await this.store.updateSettings(settings); this.configuration = this.store.snapshot().settings; this.filingFingerprint = fingerprint;
+      if (filingChanged) this.filingRevision++;
+      if (linksChanged) { this.linkRevision++; this.links = []; }
+      if (before.secretName !== settings.secretName || before.modelId !== settings.modelId) this.scheduler.setPaused(false);
+      const folderRevision = this.catalog.snapshot().revision; this.refreshFolders();
+      if (filingChanged && folderRevision === this.catalog.snapshot().revision) this.queue.invalidate(proposal => this.preserveProposal(proposal));
+      if (JSON.stringify(before.excludedPaths) !== JSON.stringify(settings.excludedPaths)) { this.index.clear(); void this.buildIndex(); }
+      this.events.emit();
     });
     this.settingsWrite = update.catch(() => undefined);
     return update;
@@ -161,14 +204,45 @@ export class ObsidianOrganizer implements OrganizerController {
   folders() { return this.catalog.snapshot().targets; }
   allFolders() { return this.vault.allFolders(); }
   async createInbox(path: string): Promise<void> { const validated = parseSettings({ ...this.settings(), inbox: path }); if (!this.plugin.app.vault.getAbstractFileByPath(validated.inbox)) await this.plugin.app.vault.createFolder(validated.inbox); await this.saveSettings({ inbox: validated.inbox }); }
-  analyzeInbox(): void { for (const file of this.plugin.app.vault.getMarkdownFiles()) if (this.vault.eligible(file.path)) this.queue.analyze(file.path); }
+  previewAnalysis(paths?: readonly string[]) {
+    const entries = new Map(this.queue.entries().map(entry => [entry.path, entry]));
+    const selected = paths ? new Set(paths) : null;
+    const notes = this.plugin.app.vault.getMarkdownFiles().filter(file => this.vault.eligible(file.path) && (!selected || selected.has(file.path)) && !['ignored', 'ready', 'analyzing', 'moving'].includes(entries.get(file.path)?.status ?? '')).sort((a, b) => b.stat.mtime - a.stat.mtime || a.path.localeCompare(b.path)).map(file => ({ path: file.path, modifiedAt: file.stat.mtime }));
+    const targets = this.catalog.snapshot().targets.length;
+    const min = targets > 254 ? Math.ceil(targets / 64) + 1 : targets ? 1 : 0;
+    const max = min * 3;
+    const remainingRequests = Math.max(0, this.settings().dailyRequestLimit - this.usage().requests);
+    return { notes, remainingRequests, requestsPerNote: { min, max }, recommendedCount: Math.min(notes.length, max ? Math.floor(remainingRequests / max) : notes.length) };
+  }
+  analyzeInbox(paths: readonly string[] = []): void { for (const note of this.previewAnalysis(paths).notes) this.queue.analyze(note.path); }
+  async readPreview(path: string): Promise<{ text: string; truncated: boolean }> {
+    safePath(path);
+    const file = this.vault.file(path);
+    if (!file || (!this.vault.eligible(path) && !this.store.journal.records().some(record => record.to === path))) throw new OrganizerError('missing', '笔记已不存在。');
+    const text = await this.plugin.app.vault.cachedRead(file);
+    let end = Math.min(text.length, 20000);
+    if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1] ?? '')) end--;
+    return { text: text.slice(0, end), truncated: end < text.length };
+  }
+  async createDestination(path: string) {
+    const validated = safePath(path), probe = new MemoryFolderCatalog();
+    probe.refresh([validated], this.settings());
+    if (!probe.snapshot().targets.length) throw new OrganizerError('invalid-settings', '此目录不能作为归档位置。');
+    const existing = this.plugin.app.vault.getAbstractFileByPath(validated);
+    if (existing && !(existing instanceof TFolder)) throw new OrganizerError('conflict', '该路径已被文件占用。');
+    if (!existing) await this.plugin.app.vault.createFolder(validated);
+    this.refreshFolders();
+    const target = this.catalog.snapshot().targets.find(target => target.path === validated);
+    if (!target) throw new OrganizerError('stale', '目录设置已变化，请重新选择。');
+    return target;
+  }
   analyzeNote(path: string): void { this.queue.analyze(path); }
   ignoreNote(path: string): void { this.scheduler.cancel('filing:' + path); this.queue.ignore(path); }
   restoreIgnored(): void { for (const entry of this.queue.entries()) if (entry.status === 'ignored') this.queue.resume(entry.path); }
   async prepareMove(path: string, target: string): Promise<MovePlan> {
     const entry = this.filing.find(item => item.path === path), proposal = entry?.proposal;
     const plan = await this.moves.prepare(path, target);
-    if (proposal && (proposal.source.contentHash !== plan.source.contentHash || proposal.source.revision !== plan.source.revision || proposal.foldersRevision !== plan.foldersRevision || proposal.context.settingsRevision !== this.revision)) throw new OrganizerError('stale', '建议已过期，请重新分析。');
+    if (proposal && (proposal.source.contentHash !== plan.source.contentHash || proposal.source.revision !== plan.source.revision || proposal.foldersRevision !== plan.foldersRevision || proposal.context.settingsRevision !== this.filingRevision)) throw new OrganizerError('stale', '建议已过期，请重新分析。');
     return plan;
   }
   async confirmMove(plan: MovePlan): Promise<void> {
@@ -182,6 +256,7 @@ export class ObsidianOrganizer implements OrganizerController {
     if (result.status !== 'done') throw new OrganizerError('stale', result.message);
     this.queue.mark(result.record.from, 'waiting', '已移回收件箱，需要时可重新分析。'); this.events.emit();
   }
+  async acknowledgeMove(id: string): Promise<void> { await this.moves.acknowledge(id); this.events.emit(); }
   recentMoves() { return this.store.journal.records(); }
   async findLinks(): Promise<void> {
     const session = this.editors.active(this.activePath);
@@ -189,21 +264,26 @@ export class ObsidianOrganizer implements OrganizerController {
     session.clearSuppressions(); await this.analyzeLinks(session.id, false);
   }
   private async analyzeLinks(id: string, automatic: boolean): Promise<void> {
-    const session = this.editors.get(id), snapshot = session?.snapshot();
+    const session = this.editors.get(id), snapshot = session?.snapshot({ dirtyOnly: automatic });
     if (!session || !snapshot || !this.vault.linkSource(snapshot.path) || !this.ready) return;
-    const settingsRevision = this.revision, epoch = this.index.epoch;
+    const settingsRevision = this.linkRevision, epoch = this.index.epoch;
     const matcher = new LocalMentionMatcher(this.index);
     const inputs = matcher.inputs(snapshot, target => this.vault.allowed(target.path)).filter(input => !session.suppressed(input.anchor));
-    if (!inputs.length) { if (!automatic) { this.message = '暂未找到合适的链接。'; this.links = []; this.events.emit(); } return; }
-    const isCurrent = () => !this.disposed && (!automatic || (this.enabled() && this.settings().autoLinks)) && this.revision === settingsRevision && this.index.epoch === epoch && session.currentRevision === snapshot.revision && session.path === snapshot.path && this.vault.linkSource(snapshot.path) && inputs.every(input => input.candidates.every(target => this.index.get(target.noteId)?.revision === target.revision));
+    if (!inputs.length) { if (!automatic) { this.message = '暂未找到合适的链接。'; this.events.emit(); } return; }
+    const isCurrent = () => !this.disposed && (!automatic || (this.enabled() && this.settings().autoLinks)) && this.linkRevision === settingsRevision && this.index.epoch === epoch && session.currentRevision === snapshot.revision && session.path === snapshot.path && this.vault.linkSource(snapshot.path) && inputs.every(input => input.candidates.every(target => this.index.get(target.noteId)?.revision === target.revision));
     try {
-      const proposals = await this.recommender.propose(inputs, this.context(), { key: 'link:' + id, priority: automatic ? 'link' : 'manual', automatic, isCurrent });
+      const proposals = await this.recommender.propose(inputs, this.context('link'), { key: 'link:' + id, priority: automatic ? 'link' : 'manual', automatic, isCurrent });
       if (!isCurrent()) return;
-      this.links = proposals.filter(proposal => proposal.selected !== null); this.message = automatic ? null : this.links.length ? null : '暂未找到合适的链接。'; this.events.emit();
+      this.links = [...this.links.filter(existing => !inputs.some(input => input.anchor.editorSessionId === existing.input.anchor.editorSessionId && input.anchor.from === existing.input.anchor.from && input.anchor.to === existing.input.anchor.to)), ...proposals.filter(proposal => proposal.selected !== null)]; this.message = automatic ? null : this.links.length ? null : '暂未找到合适的链接。'; this.events.emit();
     } catch (error) { if (!automatic) { this.report(error); throw error; } }
   }
   prepareLink(proposal: LinkProposal, target: number): LinkPlan { return this.linker.prepare(proposal, target); }
-  confirmLink(plan: LinkPlan): void { this.editors.get(plan.anchor.editorSessionId)?.rememberInsertion(plan.anchor, plan.replacement, plan.target.noteId); this.linker.confirm(plan.id); this.links = this.links.filter(item => item.id !== plan.proposalId); this.events.emit(); }
+  confirmLinks(plans: readonly LinkPlan[]): LinkConfirmation {
+    const result = this.linker.confirmMany(plans.map(plan => plan.id));
+    const applied = new Set(plans.filter(plan => result.appliedPlanIds.includes(plan.id)).map(plan => plan.proposalId));
+    this.links = this.links.filter(item => !applied.has(item.id)); this.events.emit(); return result;
+  }
+  confirmLink(plan: LinkPlan): void { const result = this.confirmLinks([plan]); if (result.failures[0]) throw result.failures[0].error; }
   dismissLink(proposal: LinkProposal): void { this.editors.get(proposal.input.anchor.editorSessionId)?.suppress(proposal.input.anchor, proposal.selected); this.links = this.links.filter(item => item.id !== proposal.id); this.events.emit(); }
   openNote(path: string): void { void this.plugin.app.workspace.openLinkText(path, this.activePath ?? '', false); }
   target(id: number) { return this.index.get(id); }
