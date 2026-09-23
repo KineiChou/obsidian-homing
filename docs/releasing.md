@@ -15,7 +15,7 @@
 本地可先运行只读检查：
 
 ```sh
-node scripts/verify-release.mjs 0.1.2
+node scripts/verify-release.mjs 0.2.0
 npm run check
 ```
 

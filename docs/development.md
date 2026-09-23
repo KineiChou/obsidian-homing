@@ -28,7 +28,7 @@
 
 `PersistedState.schemaVersion` 为 2，兼容读取 1；新增设置使用默认值，未知 schema 或损坏核心配置禁止写回。单条损坏建议降级为等待，加载过程不覆盖原文件。队列持久化只保存路径、忽略状态和可选最小建议：完整原文 SHA-256、目标路径或 null、前三个目标路径与分值、模型／提示版本、分类设置指纹、创建时间及摘录长度；不保存正文、会话 ID 或目录 ID。
 
-`InboxQueueDependencies.encodeProposal/restoreProposal` 由 controller 注入。异步 `restore()` 校验原文、设置指纹、模型和有效目标，并绑定当前会话身份；恢复期间的编辑、移除或重新分析使旧恢复结果失效。恢复和历史库存展示不联网，也不自动排队。`invalidate(preserve)` 保留仍有效的建议；失效建议和已有分析任务在自动归档允许时重新稳定等待，历史 waiting 库存不因目录变化或启用开关而上传。队列一次只向调度器提交一篇笔记，预算耗尽回到 waiting。
+`InboxQueueDependencies.encodeProposal/restoreProposal` 由 controller 注入。启动先初始化目录，再创建队列并恢复建议，避免目录初始化触发空队列写回。异步 `restore()` 校验原文、设置指纹、模型和有效目标，并绑定当前会话身份；恢复期间的编辑、移除或重新分析使旧恢复结果失效。恢复和历史库存展示不联网，也不自动排队。`invalidate(preserve)` 保留仍有效的建议；失效建议和已有分析任务在自动归档允许时重新稳定等待，历史 waiting 库存不因目录变化或启用开关而上传。队列一次只向调度器提交一篇笔记，预算耗尽回到 waiting。
 
 移动意图必须先持久化，再写文件，最后保存结果。上一会话的 done 转为不可撤销的 archived；intent 通过两端路径和内容指纹确认已完成或未执行时归档，无法确定才进入 review。`acknowledge(recordId)` 将人工核对的 review 归档。完成历史最多保留 100 条，未解决 intent/review 不参与裁剪；撤销仅授权给当前服务实例成功完成的记录，不复用持久化 noteId。
 
@@ -36,7 +36,7 @@
 
 `UsageStore.reserve(limit, { automaticLinkLimit }?)` 在本机保存预留；自动补链的子额度为 `floor(dailyRequestLimit * 0.3)`。旧用量缺失 `automaticLinkRequests` 时补 0；自动补链重试也占子额度。子额度耗尽不暂停共享调度器，归档和手动补链仍可使用总额度。
 
-`previewAnalysis(paths?)` 只读文件元数据和目录描述，按修改时间倒序列出可分析笔记并粗估正常请求范围；模拟字节分组与打包，摘录策略为状态预留最多 12 KB，全文策略参考文件大小。预估不含重试，也不保证实际请求数或费用。`analyzeInbox(paths)` 只处理用户选定的有效路径；已有 ready、ignored 或正在处理的条目被排除。`readPreview(path)` 只读所选笔记，最多返回 20,000 UTF-16 单元且不截断代理对。`createDestination(path)` 先按当前目录规则验证，再显式创建目录。
+`previewAnalysis(paths?)` 只读文件元数据和目录描述，按修改时间倒序列出可分析笔记并粗估正常请求范围；模拟字节分组与打包，摘录策略为状态预留最多 12 KB，全文策略参考文件大小。启用画像且目录超过 254 时，上界另计一次短名单拒绝后的回退请求。预估不含重试，也不保证实际请求数或费用。默认批量范围排除 ready；显式勾选可重新分析 ready。`analyzeInbox(paths)` 只处理用户选定的有效路径，排除 ignored、analyzing 和 moving。`readPreview(path)` 只读所选笔记，最多返回 20,000 UTF-16 单元且不截断代理对。`createDestination(path)` 先按当前目录规则验证，再显式创建目录。
 
 `EditorBridge.changed` 映射未受影响锚点；自动查询使用 `snapshot({ dirtyOnly: true })`。`confirmLinks(plans)` 返回 `LinkConfirmation`，同一编辑会话内通过一次事务提交，撤销抑制由链接服务登记。语义结果缓存不含文档 revision 或绝对锚点偏移；确认计划仍校验当前原文与版本。
 
@@ -50,7 +50,7 @@ Node 22.12+；使用 npm 11 验证 `npx --yes npm@11 ci --ignore-scripts`，再�
 
 0.2.0 开发预览在主区域复用 `note-organizer-inbox` ItemView；旧侧栏 view 会迁移。`ReviewPanel` 负责分组清单、单篇 Markdown 预览与操作栏，`AnalysisModal` 在发送前确认待分析路径，`LinkSuggestionsModal` 固定源会话并批量确认链接，`filingBanner` 用 CM6 顶部 panel 展示当前笔记归档与撤销。状态栏展示归档图标／数量及当前笔记链接入口；设置使用原生 `setHeading`，更多操作使用原生 `Menu`。
 
-整理视图成功归档后自动前进，并用撤销条和短暂防连击保护避免连续误操作；分值接近时可显示两个改选目录，不展示模型概率。预览与计划准备均有异步代次检查，销毁时释放 MarkdownRenderer 子组件和订阅。归档界面与提示条可以并存，任何入口都不能凭模型响应直接写入；实际交互以 [交互文档](interaction-design.md) 为准。
+整理视图成功归档后自动前进，并用撤销条和短暂防连击保护避免连续误操作；分值接近时可显示两个改选目录，不展示模型概率。状态变化将条目移入对应分组，保留当前笔记和焦点；同组内不因后台更新重新排序。预览与计划准备均有异步代次检查，销毁时释放 MarkdownRenderer 子组件和订阅；插件重载时重建遗留视图的协调器绑定。归档界面与提示条可以并存，任何入口都不能凭模型响应直接写入；实际交互以 [交互文档](interaction-design.md) 为准。
 
 `EditorSession.snapshot()` 只读取，不清除脏区间。协调器仅在当前快照成功返回建议或确认没有候选时调用 `acknowledgeAnalysis(snapshot)`；调用校验会话与文档版本，只清除已分析窗口。失败、过期响应、预算拒绝和超时保留待分析范围，确认预览读取不得消费自动分析任务。
 
