@@ -22,6 +22,8 @@ export interface InboxQueue {
   mark(path: string, status: FilingStatus, message?: string, moveRecordId?: string): void;
   invalidate(preserve?: (proposal: FilingProposal) => FilingProposal | null): void;
   subscribe(listener: () => void): Unsubscribe;
+  /** Wait for already queued saves; dispose first to prevent new queue writes. */
+  flush(): Promise<void>;
   dispose(): void;
 }
 export interface InboxQueueDependencies {

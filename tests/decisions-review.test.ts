@@ -88,3 +88,41 @@ describe('opt-in local folder profiles', () => {
     expect(DEFAULT_SETTINGS.folderProfilesEnabled).toBe(false);
   });
 });
+
+describe('profile shortlist recall safeguards', () => {
+  const targets = Array.from({ length: 300 }, (_, i) => ({ id: 'f' + i, path: 'Folder' + i, directPurpose: '', effectiveRules: [] }));
+  const input = { ...note, title: 'Quantum error correction', body: 'Quantum error correction', tags: ['physics'] };
+  it('keeps the full catalogue when protected and matching destinations together exceed the shortlist', () => {
+    const profiles = new MemoryFolderProfiles();
+    profiles.upsert({ path: 'Folder299/article.md', title: input.title, tags: input.tags });
+    const configured = targets.map((target, i) => i < 64 ? { ...target, directPurpose: 'Protected purpose' } : target);
+    expect(profiles.prefilter(input, profiles.enrich(configured))).toHaveLength(300);
+  });
+  it('retries with every group once when the shortlist is unassigned', async () => {
+    const profiles = new MemoryFolderProfiles(); profiles.upsert({ path: 'Folder299/article.md', title: input.title, tags: input.tags });
+    const { value, requests } = scheduler();
+    value.evaluate = vi.fn(async request => { requests.push(request); return answer(request, ids => requests.length === 1 ? 'unassigned' : ids[0]!); });
+    const proposal = await new MixedDepthClassifier(value, () => ({ profiles })).propose(input, { revision: 1, targets }, context, scope());
+    expect(requests[0]?.questions[0]?.options).toHaveLength(65);
+    const groups = requests.slice(1).flatMap(request => request.questions).filter(question => question.id.startsWith('group'));
+    expect(new Set(groups.flatMap(question => question.options.filter(option => option.id !== 'unassigned').map(option => option.id))).size).toBe(300);
+    expect(proposal.selected).not.toBeNull();
+  });
+  it('processes long contiguous Chinese metadata without repeated full-string decoding', () => {
+    const profiles = new MemoryFolderProfiles(); profiles.upsert({ path: 'Folder299/article.md', title: '量子计算', tags: ['量子纠错'] });
+    const result = profiles.prefilter({ ...note, title: '量子纠错', body: '量子计算'.repeat(3000), tags: [] }, profiles.enrich(targets));
+    expect(result.map(target => target.id)).toContain('f299');
+  });
+});
+
+it('keeps optional dense multilingual profiles within the classification budget', async () => {
+  const profiles = new MemoryFolderProfiles();
+  const targets = Array.from({ length: 300 }, (_, i) => ({ id: 'f' + i, path: 'Folder' + i, directPurpose: '', effectiveRules: [] }));
+  for (const target of targets) for (let sample = 0; sample < 8; sample++) profiles.upsert({ path: `${target.path}/${sample}.md`, title: '研究'.repeat(60), tags: Array.from({ length: 12 }, (_, i) => String(i) + '主题'.repeat(40)) });
+  expect(profiles.enrich(targets).every(target => byteLength(target.profile) <= 1000)).toBe(true);
+  const { value, requests } = scheduler();
+  const proposal = await new MixedDepthClassifier(value, () => ({ profiles })).propose({ ...note, body: '其他文字'.repeat(7500) }, { revision: 1, targets }, context, scope());
+  expect(proposal.selected).not.toBeNull();
+  expect(requests.length).toBeGreaterThan(1);
+  expect(JSON.stringify(requests.at(-1)?.questions)).not.toContain('profile');
+});

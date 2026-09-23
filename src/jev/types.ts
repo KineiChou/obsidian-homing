@@ -10,10 +10,10 @@ export interface HttpTransport { post(url: string, headers: Readonly<Record<stri
 export interface SecretProvider { get(): string | null }
 export interface DecisionContext { readonly taskId: string; readonly settingsRevision: number; readonly promptRevision: number; readonly modelId: string }
 export interface RequestScope { readonly key: string; readonly priority: 'manual' | 'link' | 'filing'; readonly automatic: boolean; isCurrent(): boolean }
-export interface DailyUsage { readonly day: string; readonly requests: number; readonly inputTokens: number; readonly unknownRequests: number }
+export interface DailyUsage { readonly day: string; readonly requests: number; readonly inputTokens: number; readonly unknownRequests: number; readonly automaticLinkRequests?: number }
 export interface UsageStore {
   read(): DailyUsage;
-  reserve(limit: number): Promise<void>;
+  reserve(limit: number, policy?: { readonly automaticLinkLimit: number }): Promise<void>;
   settle(inputTokens: number | null): Promise<void>;
 }
 export interface SchedulerStatus { readonly pending: number; readonly inFlight: boolean; readonly paused: boolean; readonly reason: string | null }

@@ -66,6 +66,7 @@ export class StableInboxQueue implements InboxQueue {
   }
   invalidate(preserve?: (proposal: FilingProposal) => FilingProposal | null): void {
     for (const [path, entry] of this.items) {
+      const needsAnalysis = Boolean(entry.proposal) || entry.status === 'analyzing' || this.pending.has(path);
       this.cancel(path);
       if (!this.deps.eligible(path)) this.items.delete(path);
       else if (!['ignored', 'done', 'review', 'moving'].includes(entry.status)) {
@@ -73,12 +74,13 @@ export class StableInboxQueue implements InboxQueue {
         if (proposal) this.items.set(path, { ...entry, proposal, status: proposal.selected === null ? 'unassigned' : 'ready' });
         else {
           this.items.set(path, { path, status: 'waiting', updatedAt: Date.now(), message: null });
-          if (this.deps.automaticEnabled()) this.schedule(path, true, Date.now() + (this.deps.stableMs ?? 10000));
+          if (needsAnalysis && this.deps.automaticEnabled()) this.schedule(path, true, Date.now() + (this.deps.stableMs ?? 10000));
         }
       }
     }
     this.changed(); this.arm();
   }
+  flush(): Promise<void> { return this.persistence; }
   dispose(): void { this.stopped = true; if (this.timer !== undefined) clearTimeout(this.timer); this.pending.clear(); this.versions.clear(); this.events.clear(); }
   private cancel(path: string): void { this.pending.delete(path); this.versions.delete(path); }
   private schedule(path: string, automatic: boolean, due: number): void { const token = {}; this.versions.set(path, token); this.pending.set(path, { token, automatic, due }); this.arm(); }
@@ -123,7 +125,7 @@ export class StableInboxQueue implements InboxQueue {
     });
     this.persistence = this.persistence.then(() => this.deps.persist(entries)).catch(() => {
       if (this.stopped) return;
-      for (const [path, entry] of this.items) this.items.set(path, { ...entry, message: '待办保存失败，请检查存储后重试。' });
+      for (const [path, entry] of this.items) this.items.set(path, { ...entry, message: 'error.queueStorage' });
       this.events.emit();
     });
   }

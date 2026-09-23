@@ -18,13 +18,13 @@ afterEach(() => { for (const close of cleanup.splice(0)) close(); document.body.
 function fixture(text: string) {
   const file = new TFile('Inbox/source.md', text); const changed = vi.fn(), idle = vi.fn();
   const sessions = new EditorSessions({ identity: () => 99, linkedTargets: () => new Set(), changed, idle });
-  let undoChanges: import('@codemirror/state').ChangeSet | undefined;
+  const undoChanges: import('@codemirror/state').ChangeSet[] = [];
   const editor = {
     offsetToPos: (offset: number) => { const line = view.state.doc.lineAt(offset); return { line: line.number - 1, ch: offset - line.from }; },
     transaction: vi.fn((spec: Parameters<Editor['transaction']>[0]) => {
       const changes = (spec.changes ?? []).map(change => ({ from: view.state.doc.line(change.from.line + 1).from + change.from.ch, to: change.to ? view.state.doc.line(change.to.line + 1).from + change.to.ch : undefined, insert: change.text }));
       const transaction = view.state.update({ changes });
-      undoChanges = transaction.changes.invert(view.state.doc);
+      undoChanges.push(transaction.changes.invert(view.state.doc));
       view.dispatch(transaction);
     }),
   } as unknown as Editor;
@@ -33,7 +33,7 @@ function fixture(text: string) {
   cleanup.push(() => { view.destroy(); sessions.dispose(); });
   const session = sessions.active(file.path)!;
   const index = new MemoryMetadataIndex(); index.upsert(target());
-  return { view, session, sessions, index, matcher: new LocalMentionMatcher(index), changed, idle, editor, undo: () => { view.dispatch({ changes: undoChanges!, userEvent: 'undo' }); } };
+  return { view, session, sessions, index, matcher: new LocalMentionMatcher(index), changed, idle, editor, undo: () => { view.dispatch({ changes: undoChanges.pop()!, userEvent: 'undo' }); } };
 }
 describe('CodeMirror integration', () => {
   it('excludes code, links and YAML from both anchors and outgoing context', () => {
@@ -84,7 +84,9 @@ describe('mapped proposals and atomic confirmations', () => {
     const original = f.matcher.inputs(f.session.snapshot()!, () => true)[0]!;
     f.view.dispatch({ changes: { from: 12, insert: 'changed ' } });
     expect((f.changed.mock.calls[0]![2] as EditorChange).mapAnchor(original.anchor)).toBeNull();
-    expect(f.matcher.inputs(f.session.snapshot({ dirtyOnly: true })!, () => true)).toHaveLength(1);
+    const analyzed = f.session.snapshot({ dirtyOnly: true })!;
+    expect(f.matcher.inputs(analyzed, () => true)).toHaveLength(1);
+    f.session.acknowledgeAnalysis(analyzed);
     f.view.dispatch({ changes: { from: f.view.state.doc.length, insert: 'more' } });
     expect(f.matcher.inputs(f.session.snapshot({ dirtyOnly: true })!, () => true)).toHaveLength(0);
   });
@@ -130,6 +132,39 @@ describe('mapped proposals and atomic confirmations', () => {
     expect(result.appliedPlanIds).toEqual([plans[1]!.id]); expect(result.failures[0]?.planId).toBe(plans[0]!.id);
     expect(f.view.state.doc.toString()).toBe('Transformer. [[Resources/Attention.md|Attention]].');
     expect(f.editor.transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps insertion tracking through unrelated typing and its undo', () => {
+    const f = fixture('Transformer. Elsewhere.'); const service = serviceFor(f);
+    const input = f.matcher.inputs(f.session.snapshot()!, () => true)[0]!;
+    service.confirm(service.prepare({ id: 'first', input, context, selected: 1 }, 1).id);
+    const typing = f.view.state.update({ changes: { from: 0, insert: 'prefix ' } });
+    const undoTyping = typing.changes.invert(f.view.state.doc);
+    f.view.dispatch(typing);
+    f.view.dispatch({ changes: undoTyping, userEvent: 'undo' });
+    f.undo();
+    expect(f.session.suppressed(f.matcher.inputs(f.session.snapshot()!, () => true)[0]!.anchor)).toBe(true);
+  });
+  it('retains both confirmation batches until each is actually undone', () => {
+    const f = fixture('Transformer. Attention.'); f.index.upsert(target(2, 'Attention'));
+    const service = serviceFor(f);
+    for (const id of [1, 2]) {
+      const input = f.matcher.inputs(f.session.snapshot()!, () => true).find(item => item.candidates[0]!.noteId === id)!;
+      service.confirm(service.prepare({ id: `p${id}`, input, context, selected: id }, id).id);
+    }
+    f.undo(); f.undo();
+    expect(f.matcher.inputs(f.session.snapshot()!, () => true).map(input => f.session.suppressed(input.anchor))).toEqual([true, true]);
+  });
+  it('retains dirty sentences after an obsolete analysis and consumes them only after a current analysis', () => {
+    const f = fixture('Transformer here. Attention there.'); f.index.upsert(target(2, 'Attention'));
+    f.view.dispatch({ changes: { from: 12, insert: 'new ' } });
+    const pending = f.session.snapshot({ dirtyOnly: true })!;
+    f.view.dispatch({ changes: { from: f.view.state.doc.length - 1, insert: ' changed' } });
+    f.session.acknowledgeAnalysis(pending);
+    const current = f.session.snapshot({ dirtyOnly: true })!;
+    expect(f.matcher.inputs(current, () => true)).toHaveLength(2);
+    f.session.acknowledgeAnalysis(current);
+    expect(f.matcher.inputs(f.session.snapshot({ dirtyOnly: true })!, () => true)).toHaveLength(0);
   });
 
 });
