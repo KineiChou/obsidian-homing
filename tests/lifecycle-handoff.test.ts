@@ -38,6 +38,7 @@ it('waits for the entire queued persistence chain before loading a new instance'
   await next.controller.saveSettings({ dailyRequestLimit: 17 });
   expect((f.plugin.data as { settings: { dailyRequestLimit: number } }).settings.dailyRequestLimit).toBe(17);
   await expect(f.controller.saveSettings({ dailyRequestLimit: 100 })).rejects.toMatchObject({ code: 'cancelled' });
+  next.controller.setEnabled(true); expect(() => f.controller.setEnabled(false)).toThrow(); expect(next.controller.enabled()).toBe(true);
 });
 
 it('drains accepted settings changes without losing earlier queued patches', async () => {
