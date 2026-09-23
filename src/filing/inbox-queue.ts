@@ -66,6 +66,7 @@ export class StableInboxQueue implements InboxQueue {
   }
   invalidate(preserve?: (proposal: FilingProposal) => FilingProposal | null): void {
     for (const [path, entry] of this.items) {
+      const needsAnalysis = Boolean(entry.proposal) || entry.status === 'analyzing' || this.pending.has(path);
       this.cancel(path);
       if (!this.deps.eligible(path)) this.items.delete(path);
       else if (!['ignored', 'done', 'review', 'moving'].includes(entry.status)) {
@@ -73,7 +74,7 @@ export class StableInboxQueue implements InboxQueue {
         if (proposal) this.items.set(path, { ...entry, proposal, status: proposal.selected === null ? 'unassigned' : 'ready' });
         else {
           this.items.set(path, { path, status: 'waiting', updatedAt: Date.now(), message: null });
-          if (this.deps.automaticEnabled()) this.schedule(path, true, Date.now() + (this.deps.stableMs ?? 10000));
+          if (needsAnalysis && this.deps.automaticEnabled()) this.schedule(path, true, Date.now() + (this.deps.stableMs ?? 10000));
         }
       }
     }
