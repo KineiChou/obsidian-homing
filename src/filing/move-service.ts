@@ -11,6 +11,7 @@ export class ConfirmedMoveService implements MoveService {
   private readonly locks = new Map<number, Promise<void>>();
   private readonly uncertain = new Set<string>();
   private counter = 0;
+  private readonly undoable = new Set<string>();
   constructor(private readonly host: MoveHost, private readonly journal: MoveJournal) {}
   async prepare(path: string, folderId: string): Promise<MovePlan> {
     safePath(path);
@@ -22,7 +23,8 @@ export class ConfirmedMoveService implements MoveService {
     const source = await this.host.source(path);
     if (!source || source.path !== path || this.host.currentPath(source.noteId) !== path || folders.revision !== this.host.folders().revision || settingsRevision !== this.host.settingsRevision()) throw new OrganizerError('stale', '笔记或目录已变化，请重新选择归档位置。');
     if (this.host.exists(destination)) throw new OrganizerError('conflict', '目标位置已有同名文件，请选择其他位置。');
-    if (!this.host.referencesSafe(path, destination)) throw new OrganizerError('unsafe', '移动可能改变现有链接，请先核对链接。');
+    const referenceIssue = this.referenceIssue(path, destination);
+    if (referenceIssue) throw new OrganizerError('unsafe', referenceIssue);
     const plan: MovePlan = { id: `move-${Date.now()}-${++this.counter}`, source: { ...source }, destination, folderId, foldersRevision: folders.revision, settingsRevision };
     for (const [id, existing] of this.plans) if (existing.source.noteId === source.noteId) this.plans.delete(id);
     if (this.plans.size >= 100) this.plans.delete(this.plans.keys().next().value as string);
@@ -42,24 +44,34 @@ export class ConfirmedMoveService implements MoveService {
       if (recheck) { await this.markReview(record); return recheck; }
       try { await this.host.rename(record.from, record.to); } catch { await this.markReview(record); return review(); }
       const done: MoveRecord = { ...record, status: 'done' };
-      try { await this.journal.put(done); return { status: 'done', record: done }; }
+      try {
+        await this.journal.put(done);
+        const retained = new Set(this.journal.records().filter(item => item.status === 'done').map(item => item.id));
+        for (const id of this.undoable) if (!retained.has(id)) this.undoable.delete(id);
+        this.undoable.add(done.id);
+        return { status: 'done', record: done };
+      }
       catch { this.uncertain.add(record.id); return review(); }
     });
   }
   async undo(recordId: string): Promise<MoveResult> {
     const record = this.journal.records().find(item => item.id === recordId);
-    if (!record || record.status !== 'done' || this.uncertain.has(recordId)) return stale();
+    if (!record || !this.undoable.has(recordId) || record.status !== 'done' || this.uncertain.has(recordId)) return stale();
     return this.serial(record.noteId, async () => {
       const latest = this.journal.records().find(item => item.id === recordId);
       if (latest?.status !== 'done' || this.uncertain.has(recordId)) return stale();
       if (this.host.currentPath(record.noteId) !== record.to || this.host.exists(record.from)) return this.host.exists(record.from) ? conflict() : stale();
       const source = await this.host.source(record.to);
-      if (!source || source.noteId !== record.noteId || source.path !== record.to || !this.host.referencesSafe(record.to, record.from)) return stale();
+      if (!source || source.noteId !== record.noteId || source.path !== record.to) return stale();
+      const referenceIssue = this.referenceIssue(record.to, record.from);
+      if (referenceIssue) return { status: 'failed', message: referenceIssue };
       // A reverse intent records the latest content; undo never restores an old body.
       const intent: MoveRecord = { ...record, id: `undo-${record.id}-${++this.counter}`, from: record.to, to: record.from, contentHash: source.contentHash, createdAt: Date.now(), status: 'intent' };
       try { await this.journal.put(intent); } catch { return { status: 'failed', message: '撤销记录无法保存，笔记尚未移动。' }; }
       const current = await this.host.source(record.to);
-      if (!current || !same(source, current) || this.host.currentPath(record.noteId) !== record.to || this.host.exists(record.from) || !this.host.referencesSafe(record.to, record.from)) { await this.markReview(intent); return stale(); }
+      if (!current || !same(source, current) || this.host.currentPath(record.noteId) !== record.to || this.host.exists(record.from)) { await this.markReview(intent); return stale(); }
+      const recheckReferences = this.referenceIssue(record.to, record.from);
+      if (recheckReferences) { await this.markReview(intent); return { status: 'failed', message: recheckReferences }; }
       this.uncertain.add(recordId);
       try { await this.host.rename(record.to, record.from); } catch { await this.markReview(intent); return review(); }
       const undone: MoveRecord = { ...record, status: 'undone' };
@@ -69,20 +81,22 @@ export class ConfirmedMoveService implements MoveService {
   }
   async recover(): Promise<void> {
     for (const record of this.journal.records()) {
-      if (record.status === 'done') {
-        await this.journal.put({ ...record, status: 'review', message: '上次会话的移动记录，请人工核对笔记身份后处理。' });
+      if (record.status === 'done' && !this.undoable.has(record.id)) {
+        await this.journal.put({ ...record, status: 'archived', message: '上次会话已完成的移动。' });
         continue;
       }
       if (record.status !== 'intent') continue;
-      await this.serial(record.noteId, async () => {
-        // Session IDs are not durable. Recovery inspects paths and fingerprints but
-        // requires human review before granting another write or an undo identity.
-        const from = await this.host.source(record.from);
-        const to = await this.host.source(record.to);
-        const message = !from && to?.contentHash === record.contentHash ? '目标位置发现笔记，请核对移动是否完成。' : from?.contentHash === record.contentHash && !to ? '原位置仍有笔记，请核对后重新归档。' : '笔记位置或内容已变化，请核对移动记录。';
-        await this.journal.put({ ...record, status: 'review', message });
-      });
+      // Recovery never uses persisted session IDs to authorize a write or undo.
+      const from = await this.host.source(record.from);
+      const to = await this.host.source(record.to);
+      const completed = !from && !this.host.exists(record.from) && to?.contentHash === record.contentHash;
+      const cancelled = from?.contentHash === record.contentHash && !to && !this.host.exists(record.to);
+      await this.journal.put({ ...record, status: completed || cancelled ? 'archived' : 'review', message: completed ? '已在目标位置确认移动完成。' : cancelled ? '原位置仍有笔记，此次移动未完成。' : '笔记位置或内容已变化，请核对移动记录。' });
     }
+  }
+  async acknowledge(recordId: string): Promise<void> {
+    const record = this.journal.records().find(item => item.id === recordId);
+    if (record?.status === 'review') await this.journal.put({ ...record, status: 'archived', message: '已人工核对移动记录。' });
   }
   private async validate(plan: MovePlan): Promise<MoveResult | null> {
     const current = await this.host.source(plan.source.path);
@@ -90,8 +104,13 @@ export class ConfirmedMoveService implements MoveService {
     const folder = folders.targets.find(item => item.id === plan.folderId);
     if (!current || !same(current, plan.source) || this.host.currentPath(current.noteId) !== plan.source.path || !this.host.eligible(plan.source.path) || folders.revision !== plan.foldersRevision || this.host.settingsRevision() !== plan.settingsRevision || !folder || folder.path + '/' + filename(plan.source.path) !== plan.destination) return stale();
     if (this.host.exists(plan.destination)) return conflict();
-    if (!this.host.referencesSafe(plan.source.path, plan.destination)) return { status: 'failed', message: '移动可能改变现有链接，请先核对链接。' };
+    const referenceIssue = this.referenceIssue(plan.source.path, plan.destination);
+    if (referenceIssue) return { status: 'failed', message: referenceIssue };
     return null;
+  }
+  private referenceIssue(from: string, to: string): string | null {
+    const result = this.host.referencesSafe(from, to);
+    return result === true ? null : typeof result === 'string' && result ? result : '移动可能改变现有链接，请先核对链接。';
   }
   private async markReview(record: MoveRecord): Promise<void> { this.uncertain.add(record.id); try { await this.journal.put({ ...record, status: 'review', message: '请核对笔记当前位置后再操作。' }); } catch { /* Durable intent remains available for recovery. */ } }
   private async serial(noteId: number, operation: () => Promise<MoveResult | void>): Promise<MoveResult> {

@@ -2,7 +2,7 @@ import { OrganizerError } from '../core/errors';
 import { safePath } from '../core/paths';
 import { DEFAULT_SETTINGS, parseSettings } from '../settings';
 import type { OrganizerSettings } from '../settings';
-import type { MoveRecord, PersistedFilingEntry, MoveJournal } from '../filing/types';
+import type { MoveRecord, PersistedFilingEntry, PersistedFilingProposal, MoveJournal } from '../filing/types';
 import type { DailyUsage, UsageStore } from '../jev/types';
 import type { PersistedState, PersistencePort, StateStore } from './types';
 
@@ -12,14 +12,33 @@ const storageError = () => new OrganizerError('storage', '存储无法读取或�
 function object(value: unknown): Record<string, unknown> { if (!value || typeof value !== 'object' || Array.isArray(value)) throw storageError(); return value as Record<string, unknown>; }
 function integer(value: unknown): value is number { return Number.isSafeInteger(value) && Number(value) >= 0; }
 function path(value: unknown): value is string { return typeof value === 'string' && safePath(value) === value; }
+function parseProposal(value: unknown): PersistedFilingProposal | undefined {
+  try {
+    const v = object(value);
+    if (typeof v.contentHash !== 'string' || !v.contentHash || (v.selectedPath !== null && !path(v.selectedPath)) || typeof v.modelId !== 'string' || !v.modelId || !integer(v.promptRevision) || typeof v.settingsFingerprint !== 'string' || !v.settingsFingerprint || !integer(v.createdAt) || !Array.isArray(v.ranked) || v.ranked.length > 3) return undefined;
+    const ranked = v.ranked.map((item: unknown) => {
+      const candidate = object(item);
+      if (!path(candidate.path) || typeof candidate.probability !== 'number' || !Number.isFinite(candidate.probability) || candidate.probability < 0 || candidate.probability > 1) throw storageError();
+      return { path: candidate.path, probability: candidate.probability };
+    });
+    if (new Set(ranked.map(item => item.path)).size !== ranked.length) return undefined;
+    let excerpt;
+    if (v.excerpt !== undefined) {
+      const e = object(v.excerpt);
+      if (!integer(e.originalChars) || !integer(e.sentChars) || e.sentChars > e.originalChars) return undefined;
+      excerpt = { originalChars: e.originalChars, sentChars: e.sentChars };
+    }
+    return { contentHash: v.contentHash, selectedPath: v.selectedPath, ranked, modelId: v.modelId, promptRevision: v.promptRevision, settingsFingerprint: v.settingsFingerprint, createdAt: v.createdAt, ...(excerpt ? { excerpt } : {}) };
+  } catch { return undefined; }
+}
 function parseQueue(value: unknown): PersistedFilingEntry[] {
   if (!Array.isArray(value)) throw storageError();
   const paths = new Set<string>();
-  return value.map((item: unknown) => { const v = object(item); if (!path(v.path) || (v.status !== 'pending' && v.status !== 'ignored') || paths.has(v.path)) throw storageError(); paths.add(v.path); return { path: v.path, status: v.status }; });
+  return value.map((item: unknown) => { const v = object(item); if (!path(v.path) || (v.status !== 'pending' && v.status !== 'ignored') || paths.has(v.path)) throw storageError(); paths.add(v.path); const proposal = v.status === 'pending' ? parseProposal(v.proposal) : undefined; return { path: v.path, status: v.status, ...(proposal ? { proposal } : {}) }; });
 }
 function parseRecord(value: unknown): MoveRecord {
   const v = object(value);
-  if (typeof v.id !== 'string' || !v.id || !integer(v.noteId) || !path(v.from) || !path(v.to) || typeof v.contentHash !== 'string' || !v.contentHash || !integer(v.createdAt) || !['intent', 'done', 'undone', 'review'].includes(String(v.status)) || (v.message !== undefined && typeof v.message !== 'string')) throw storageError();
+  if (typeof v.id !== 'string' || !v.id || !integer(v.noteId) || !path(v.from) || !path(v.to) || typeof v.contentHash !== 'string' || !v.contentHash || !integer(v.createdAt) || !['intent', 'done', 'undone', 'review', 'archived'].includes(String(v.status)) || (v.message !== undefined && typeof v.message !== 'string')) throw storageError();
   return { id: v.id, noteId: v.noteId, from: v.from, to: v.to, contentHash: v.contentHash, createdAt: v.createdAt, status: v.status as MoveRecord['status'], ...(v.message === undefined ? {} : { message: v.message as string }) };
 }
 function parseUsage(value: unknown): DailyUsage {
@@ -28,7 +47,7 @@ function parseUsage(value: unknown): DailyUsage {
   return { day: v.day, requests: v.requests, inputTokens: v.inputTokens, unknownRequests: v.unknownRequests };
 }
 export class PluginStateStore implements StateStore {
-  private state: PersistedState = { schemaVersion: 1, settings: structuredClone(DEFAULT_SETTINGS), filingQueue: [], moveJournal: [] };
+  private state: PersistedState = { schemaVersion: 2, settings: structuredClone(DEFAULT_SETTINGS), filingQueue: [], moveJournal: [] };
   private ready = false;
   private tail: Promise<void> = Promise.resolve();
   private usageTail: Promise<void> = Promise.resolve();
@@ -66,14 +85,14 @@ export class PluginStateStore implements StateStore {
       const value = await this.port.load();
       if (value != null) {
         const v = object(value);
-        if (v.schemaVersion !== 1 || !Array.isArray(v.moveJournal)) throw storageError();
+        if ((v.schemaVersion !== 1 && v.schemaVersion !== 2) || !Array.isArray(v.moveJournal)) throw storageError();
         const settings = object(v.settings);
         for (const [key, defaultValue] of Object.entries(DEFAULT_SETTINGS)) {
           if (!(key in settings) || settings[key] === null || (Array.isArray(defaultValue) ? !Array.isArray(settings[key]) : typeof settings[key] !== typeof defaultValue)) throw storageError();
         }
         const records = v.moveJournal.map(parseRecord);
         if (new Set(records.map(record => record.id)).size !== records.length) throw storageError();
-        this.state = { schemaVersion: 1, settings: parseSettings(settings), filingQueue: parseQueue(v.filingQueue), moveJournal: records };
+        this.state = { schemaVersion: 2, settings: parseSettings(settings), filingQueue: parseQueue(v.filingQueue), moveJournal: records };
       }
       this.readUsage();
       const enabled = this.port.loadLocal(ENABLED);
