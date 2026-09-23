@@ -39,12 +39,12 @@ export class SharedDecisionScheduler implements DecisionScheduler {
   status(): SchedulerStatus { return { pending: this.queue.size, inFlight: this.active !== null, paused: this.paused, reason: this.reason }; }
   evaluate(batch: ChoiceBatch, scope: RequestScope): Promise<ChoiceBatchResult> {
     try {
-      if (this.disposed) throw new OrganizerError('cancelled', '分析已停止。');
-      if (this.paused) throw new OrganizerError('cancelled', this.reason ?? '分析已暂停。');
+      if (this.disposed) throw new OrganizerError('cancelled', 'error.analysisStopped');
+      if (this.paused) throw new OrganizerError('cancelled', this.reason ?? 'error.analysisPaused');
       assertCurrent(scope);
       serializeBatch(batch);
       this.cancel(scope.key);
-      if (this.queue.size >= this.maxPending) throw new OrganizerError('limit', '等待分析的任务过多，请稍后重试。');
+      if (this.queue.size >= this.maxPending) throw new OrganizerError('limit', 'error.queueFull');
     } catch (error) { return Promise.reject(this.error(error)); }
     return new Promise((resolve, reject) => {
       this.queue.set(scope.key, { batch, scope, resolve, reject, settled: false, attempts: 0, readyAt: Date.now() });
@@ -55,18 +55,18 @@ export class SharedDecisionScheduler implements DecisionScheduler {
   cancel(key: string): void {
     const queued = this.queue.get(key);
     if (!queued && (this.active?.scope.key !== key || this.active.settled)) return;
-    if (queued) { this.queue.delete(key); this.fail(queued, new OrganizerError('cancelled', '已由更新的分析取代。')); }
-    if (this.active?.scope.key === key) this.fail(this.active, new OrganizerError('cancelled', '分析已取消，已发送请求仍可能计费。'));
+    if (queued) { this.queue.delete(key); this.fail(queued, new OrganizerError('cancelled', 'error.analysisSuperseded')); }
+    if (this.active?.scope.key === key) this.fail(this.active, new OrganizerError('cancelled', 'error.analysisCancelledSent'));
     this.events.emit();
   }
   setPaused(paused: boolean): void {
     if (this.disposed) return;
     this.paused = paused;
-    this.reason = paused ? '分析已暂停。' : null;
+    this.reason = paused ? 'error.analysisPaused' : null;
     if (paused) {
       if (this.timer) clearTimeout(this.timer);
       this.timer = undefined;
-      if (this.active) this.fail(this.active, new OrganizerError('cancelled', '分析已暂停，已发送请求仍可能计费。'));
+      if (this.active) this.fail(this.active, new OrganizerError('cancelled', 'error.analysisPausedSent'));
     }
     this.events.emit();
     if (!paused) this.pump();
@@ -76,9 +76,9 @@ export class SharedDecisionScheduler implements DecisionScheduler {
     this.paused = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
-    for (const job of this.queue.values()) this.fail(job, new OrganizerError('cancelled', '分析已停止。'));
+    for (const job of this.queue.values()) this.fail(job, new OrganizerError('cancelled', 'error.analysisStopped'));
     this.queue.clear();
-    if (this.active) this.fail(this.active, new OrganizerError('cancelled', '分析已停止。'));
+    if (this.active) this.fail(this.active, new OrganizerError('cancelled', 'error.analysisStopped'));
     this.events.clear();
   }
   private fail(job: Job, error: OrganizerError): void {
@@ -87,14 +87,14 @@ export class SharedDecisionScheduler implements DecisionScheduler {
     job.reject(error);
   }
   private error(error: unknown): OrganizerError {
-    return error instanceof OrganizerError ? error : new OrganizerError('service', '分析暂未完成，请重试。');
+    return error instanceof OrganizerError ? error : new OrganizerError('service', 'error.analysisFailed');
   }
   private pump(): void {
     if (this.active || this.paused || this.disposed) return;
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
     for (const [key, job] of this.queue) {
-      if (!job.scope.isCurrent()) { this.queue.delete(key); this.fail(job, new OrganizerError('stale', '内容或设置已改变，请重新分析。')); }
+      if (!job.scope.isCurrent()) { this.queue.delete(key); this.fail(job, new OrganizerError('stale', 'error.analysisStale')); }
     }
     const now = Date.now();
     const readyTime = (job: Job): number => Math.max(job.readyAt, job.scope.automatic ? this.lastAutomatic + this.interval : 0);
@@ -119,14 +119,14 @@ export class SharedDecisionScheduler implements DecisionScheduler {
     try {
       assertCurrent(job.scope);
       const limit = this.dailyLimit();
-      if (!Number.isSafeInteger(limit) || limit < 1) throw new OrganizerError('budget', '今日分析额度已用完，请调整额度或明日再试。');
-      try { await this.usage.reserve(limit); reserved = true; }
-      catch (error) { throw error instanceof OrganizerError ? error : new OrganizerError('storage', '无法保存调用额度，本次分析未发送。'); }
+      if (!Number.isSafeInteger(limit) || limit < 1) throw new OrganizerError('budget', 'error.budgetExhausted');
+      try { await this.usage.reserve(limit, job.scope.automatic && job.scope.priority === 'link' ? { automaticLinkLimit: Math.floor(limit * 0.3) } : undefined); reserved = true; }
+      catch (error) { throw error instanceof OrganizerError ? error : new OrganizerError('storage', 'error.budgetStorage'); }
       assertCurrent(job.scope);
-      if (job.settled || this.disposed || this.paused) throw new OrganizerError('cancelled', '分析已停止。');
+      if (job.settled || this.disposed || this.paused) throw new OrganizerError('cancelled', 'error.analysisStopped');
       if (job.scope.automatic) this.lastAutomatic = Date.now();
       timeout = setTimeout(() => {
-        this.reason = '等待服务响应超时；正在等待已发送请求结束。';
+        this.reason = 'error.analysisTimeout';
         this.fail(job, new OrganizerError('timeout', this.reason));
         this.events.emit();
       }, this.timeout);
@@ -138,12 +138,12 @@ export class SharedDecisionScheduler implements DecisionScheduler {
       if (timeout) clearTimeout(timeout);
       if (reserved) {
         try { await this.usage.settle(result?.inputTokens ?? null); }
-        catch { failure = new OrganizerError('storage', '调用已结束，但用量保存失败。'); }
+        catch { failure = new OrganizerError('storage', 'error.usageStorage'); }
       }
       this.active = null;
     }
     if (!job.settled) {
-      if (!job.scope.isCurrent()) failure = new OrganizerError('stale', '内容或设置已改变，请重新分析。');
+      if (!job.scope.isCurrent()) failure = new OrganizerError('stale', 'error.analysisStale');
       if (failure) {
         const retryable = ['rate-limit', 'network', 'service'].includes(failure.code);
         if (retryable && job.attempts < this.retries && failure.retryAfterMs <= 60_000 && this.queue.size < this.maxPending && !this.disposed && !this.paused) {
