@@ -14,15 +14,15 @@ export class JevLinkRecommender implements LinkRecommender {
   constructor(private readonly scheduler: DecisionScheduler) {}
   async propose(inputs: readonly LinkInput[], context: DecisionContext, scope: RequestScope): Promise<readonly LinkProposal[]> {
     assertCurrent(scope);
-    if (inputs.length > 256) throw new OrganizerError('limit', '本次链接候选过多，请选择更小的文字范围。');
+    if (inputs.length > 256) throw new OrganizerError('limit', 'error.tooManyLinkInputs');
     const keys = inputs.map(input => JSON.stringify({ mention: fold(input.anchor.originalText), context: input.anchor.contextText, sourcePath: input.anchor.sourcePath, candidates: input.candidates, settingsRevision: context.settingsRevision, promptRevision: context.promptRevision, modelId: context.modelId }));
     const selections = new Map<number, number | null>();
     const questions: ChoiceQuestion[] = [];
     for (let index = 0; index < inputs.length; index++) {
       const input = inputs[index]!;
       const ids = input.candidates.map(candidate => candidate.noteId);
-      if (ids.length > 254) throw new OrganizerError('limit', '同一处文字对应过多笔记，请缩小候选范围。');
-      if (new Set(ids).size !== ids.length || ids.some(id => !Number.isSafeInteger(id) || id < 0)) throw new OrganizerError('invalid-settings', '链接候选标识无效。');
+      if (ids.length > 254) throw new OrganizerError('limit', 'error.tooManyLinkCandidates');
+      if (new Set(ids).size !== ids.length || ids.some(id => !Number.isSafeInteger(id) || id < 0)) throw new OrganizerError('invalid-settings', 'error.linkIds');
       const key = keys[index]!;
       const cached = this.cache.get(key);
       if (cached) { this.cache.delete(key); this.cache.set(key, cached); selections.set(index, cached.selected); continue; }
@@ -44,22 +44,22 @@ export class JevLinkRecommender implements LinkRecommender {
       assertCurrent(scope);
       const response = await this.scheduler.evaluate({ ...batch, modelId }, scope);
       assertCurrent(scope);
-      if (modelId !== 'jev-latest' && response.modelId !== modelId) throw new OrganizerError('invalid-response', '分析模型发生变化，请重新分析。');
+      if (modelId !== 'jev-latest' && response.modelId !== modelId) throw new OrganizerError('invalid-response', 'error.modelChanged');
       modelId = response.modelId;
       for (const question of batch.questions) {
         const index = Number(question.id.slice(4));
         const input = inputs[index]!;
         const answer = response.answers[question.id];
-        if (!answer) throw new OrganizerError('invalid-response', '链接分析结果不完整，请重试。');
+        if (!answer) throw new OrganizerError('invalid-response', 'error.linkIncomplete');
         const selected = answer.selected === UNASSIGNED ? null : input.candidates.find(candidate => `n${candidate.noteId}` === answer.selected)?.noteId;
-        if (selected === undefined) throw new OrganizerError('invalid-response', '链接分析返回了范围外的目标。');
+        if (selected === undefined) throw new OrganizerError('invalid-response', 'error.linkOutsideScope');
         selections.set(index, selected);
       }
     }
     assertCurrent(scope);
     return inputs.map((input, index) => {
       const selected = selections.get(index);
-      if (selected === undefined) throw new OrganizerError('invalid-response', '链接分析结果不完整，请重试。');
+      if (selected === undefined) throw new OrganizerError('invalid-response', 'error.linkIncomplete');
       this.remember(keys[index]!, selected);
       return { id: crypto.randomUUID(), input, context: { ...context }, selected };
     });

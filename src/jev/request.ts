@@ -7,35 +7,35 @@ const REQUEST_BUDGET = 60_000;
 export const UNASSIGNED = 'unassigned';
 
 export function assertCurrent(scope: RequestScope): void {
-  if (!scope.isCurrent()) throw new OrganizerError('stale', '内容或设置已改变，请重新分析。');
+  if (!scope.isCurrent()) throw new OrganizerError('stale', 'error.analysisStale');
 }
 export function byteLength(value: unknown): number {
   return new TextEncoder().encode(JSON.stringify(value)).byteLength;
 }
 function assertIds(ids: readonly string[]): void {
   if (new Set(ids).size !== ids.length || ids.some(id => !id || id.length > 200)) {
-    throw new OrganizerError('invalid-settings', '问题或候选标识无效。');
+    throw new OrganizerError('invalid-settings', 'error.questionIds');
   }
 }
 export function serializeQuestion(question: ChoiceQuestion): JsonValue {
   if (question.options.length < 2 || question.options.length > 255) {
-    throw new OrganizerError('limit', '每题需要 2 至 255 个选项，请缩小候选范围。');
+    throw new OrganizerError('limit', 'error.choiceCount');
   }
   assertIds(question.options.map(option => option.id));
   return { type: 'choice', instructions: question.instructions, criteria: Object.fromEntries(question.options.map(option => [option.id, option.description])) };
 }
 export function serializeBatch(batch: ChoiceBatch): string {
   if (!batch.modelId.trim() || batch.modelId.length > 200 || batch.questions.length === 0 || batch.questions.length > 256) {
-    throw new OrganizerError('invalid-settings', '模型或问题配置无效。');
+    throw new OrganizerError('invalid-settings', 'error.modelOrQuestions');
   }
   assertIds(batch.questions.map(question => question.id));
   const questions = Object.fromEntries(batch.questions.map(question => [question.id, serializeQuestion(question)]));
   const stateSize = byteLength(batch.state);
   if (Object.values(questions).some(question => stateSize + byteLength(question) > QUESTION_BUDGET)) {
-    throw new OrganizerError('limit', '笔记与候选说明超过单题发送预算，请缩小范围或手动处理。');
+    throw new OrganizerError('limit', 'error.questionBudget');
   }
   const value = { model: batch.modelId, state: batch.state, questions };
-  if (byteLength(value) > REQUEST_BUDGET) throw new OrganizerError('limit', '本次分析超过发送预算，请缩小范围或手动处理。');
+  if (byteLength(value) > REQUEST_BUDGET) throw new OrganizerError('limit', 'error.requestBudget');
   return JSON.stringify(value);
 }
 export function fitsBatch(batch: ChoiceBatch): boolean {
