@@ -8,7 +8,7 @@ import type { PersistedState, PersistencePort, StateStore } from './types';
 
 const ENABLED = 'note-organizer-enabled';
 const USAGE = 'note-organizer-usage';
-const storageError = () => new OrganizerError('storage', '存储无法读取或保存，原始数据已保留。');
+const storageError = () => new OrganizerError('storage', 'error.storage');
 function object(value: unknown): Record<string, unknown> { if (!value || typeof value !== 'object' || Array.isArray(value)) throw storageError(); return value as Record<string, unknown>; }
 function integer(value: unknown): value is number { return Number.isSafeInteger(value) && Number(value) >= 0; }
 function path(value: unknown): value is string { return typeof value === 'string' && safePath(value) === value; }
@@ -44,7 +44,9 @@ function parseRecord(value: unknown): MoveRecord {
 function parseUsage(value: unknown): DailyUsage {
   const v = object(value);
   if (typeof v.day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v.day) || !integer(v.requests) || !integer(v.inputTokens) || !integer(v.unknownRequests) || v.unknownRequests > v.requests) throw storageError();
-  return { day: v.day, requests: v.requests, inputTokens: v.inputTokens, unknownRequests: v.unknownRequests, automaticLinkRequests: v.automaticLinkRequests === undefined ? 0 : integer(v.automaticLinkRequests) && v.automaticLinkRequests <= v.requests ? v.automaticLinkRequests : (() => { throw storageError(); })() };
+  const automaticLinkRequests = v.automaticLinkRequests ?? 0;
+  if (!integer(automaticLinkRequests) || automaticLinkRequests > v.requests) throw storageError();
+  return { day: v.day, requests: v.requests, inputTokens: v.inputTokens, unknownRequests: v.unknownRequests, automaticLinkRequests };
 }
 export class PluginStateStore implements StateStore {
   private state: PersistedState = { schemaVersion: 2, settings: structuredClone(DEFAULT_SETTINGS), filingQueue: [], moveJournal: [] };
@@ -65,10 +67,10 @@ export class PluginStateStore implements StateStore {
       return { ...current, moveJournal: [...unfinished, ...completed] };
     }) };
     this.usage = { read: () => this.readUsage(), reserve: (limit, policy) => this.updateUsage(() => {
-      if (!Number.isSafeInteger(limit) || limit < 1) throw new OrganizerError('budget', '每日分析额度无效。');
+      if (!Number.isSafeInteger(limit) || limit < 1) throw new OrganizerError('budget', 'error.budgetInvalid');
       const current = this.readUsage();
-      if (current.requests >= limit) throw new OrganizerError('budget', '今日分析请求已达到上限。');
-      if (policy && (!integer(policy.automaticLinkLimit) || (current.automaticLinkRequests ?? 0) >= policy.automaticLinkLimit)) throw new OrganizerError('budget', '今日自动链接额度已用完，仍可分析归档或手动添加链接。');
+      if (current.requests >= limit) throw new OrganizerError('budget', 'error.budgetReached');
+      if (policy && (!integer(policy.automaticLinkLimit) || (current.automaticLinkRequests ?? 0) >= policy.automaticLinkLimit)) throw new OrganizerError('budget', 'error.automaticLinkBudgetExceeded');
       this.saveUsage({ ...current, automaticLinkRequests: (current.automaticLinkRequests ?? 0) + (policy ? 1 : 0), requests: current.requests + 1, unknownRequests: current.unknownRequests + 1 });
       this.reservations.push(current.day);
     }), settle: tokens => this.updateUsage(() => {
@@ -89,6 +91,7 @@ export class PluginStateStore implements StateStore {
         if ((v.schemaVersion !== 1 && v.schemaVersion !== 2) || !Array.isArray(v.moveJournal)) throw storageError();
         const settings = object(v.settings);
         for (const [key, defaultValue] of Object.entries(DEFAULT_SETTINGS)) {
+          if (!(key in settings) && ['provider', 'endpoint', 'longNoteStrategy', 'folderProfilesEnabled'].includes(key)) continue;
           if (!(key in settings) || settings[key] === null || (Array.isArray(defaultValue) ? !Array.isArray(settings[key]) : typeof settings[key] !== typeof defaultValue)) throw storageError();
         }
         const records = v.moveJournal.map(parseRecord);

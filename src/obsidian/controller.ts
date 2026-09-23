@@ -8,7 +8,9 @@ import { PluginStateStore } from '../storage/state-store';
 import { StableInboxQueue } from '../filing/inbox-queue';
 import { ConfirmedMoveService } from '../filing/move-service';
 import { MixedDepthClassifier } from '../filing/classifier';
-import { JevClient } from '../jev/client';
+import { createDecisionClient } from '../providers/client';
+import { prepareNote } from '../filing/note-excerpt';
+import { MemoryFolderProfiles } from '../folders/profiles';
 import { SharedDecisionScheduler } from '../jev/scheduler';
 import { MemoryMetadataIndex } from '../linking/metadata-index';
 import { LocalMentionMatcher } from '../linking/mention-matcher';
@@ -19,6 +21,7 @@ import type { LinkConfirmation, LinkPlan, LinkProposal } from '../linking/types'
 import type { FilingEntry, FilingProposal, PersistedFilingProposal, MovePlan } from '../filing/types';
 import { EditorSessions } from './editor-extension';
 import { VaultAdapter } from './vault-adapter';
+import { estimateFilingRequests } from './analysis-estimate';
 import { filingSettingsKey, linkSettingsKey } from './settings-impact';
 
 export class ObsidianOrganizer implements OrganizerController {
@@ -39,6 +42,8 @@ export class ObsidianOrganizer implements OrganizerController {
   private settingsWrite: Promise<void> = Promise.resolve();
   private filingRevision = 0;
   private linkRevision = 0;
+  private readonly profiles = new MemoryFolderProfiles();
+  private readonly excerpts = new Map<string, { originalChars: number; sentChars: number }>();
   private filingFingerprint = '';
   private generation = 0;
   private ready = false;
@@ -58,7 +63,8 @@ export class ObsidianOrganizer implements OrganizerController {
           const anchor = change?.mapAnchor(link.input.anchor);
           return anchor ? [{ ...link, input: { ...link.input, anchor } }] : [];
         });
-        if (this.queue?.entries().some(entry => entry.path === path && entry.proposal)) this.queue.mark(path, 'waiting', '内容已改变，等待保存后重新分析。');
+        this.excerpts.delete(path);
+        if (this.queue?.entries().some(entry => entry.path === path && !['ignored', 'done', 'moving', 'review'].includes(entry.status))) this.queue.mark(path, 'waiting', '内容已改变，等待保存后重新分析。');
         this.message = null; this.events.emit();
       },
       idle: session => { if (this.enabled() && this.settings().autoLinks) void this.analyzeLinks(session, true); },
@@ -68,19 +74,22 @@ export class ObsidianOrganizer implements OrganizerController {
     await this.store.load();
     this.configuration = this.store.snapshot().settings;
     this.filingFingerprint = await contentHash(filingSettingsKey(this.configuration));
-    const client = new JevClient({ post: async (url, headers, body) => {
+    const client = createDecisionClient({ post: async (url, headers, body) => {
       try { const response = await requestUrl({ url, method: 'POST', headers: { ...headers }, body, throw: false }); let json: unknown = null; try { json = response.json; } catch { /* HTTP status remains authoritative for non-JSON failures. */ } return { status: response.status, headers: response.headers, json }; }
       catch { throw new OrganizerError('network', '暂时无法连接 Jev，请稍后重试。'); }
-    } }, { get: () => this.plugin.app.secretStorage.getSecret(this.settings().secretName) });
+    } }, { get: () => this.plugin.app.secretStorage.getSecret(this.settings().secretName) }, () => this.settings());
     this.scheduler = new SharedDecisionScheduler(client, this.store.usage, () => this.settings().dailyRequestLimit);
-    const classifier = new MixedDepthClassifier(this.scheduler);
+    const classifier = new MixedDepthClassifier(this.scheduler, () => ({ longNoteStrategy: this.settings().longNoteStrategy, ...(this.settings().folderProfilesEnabled ? { profiles: this.profiles } : {}) }));
     this.queue = new StableInboxQueue({
       eligible: path => this.vault.eligible(path), automaticEnabled: () => this.enabled() && this.settings().autoFiling,
       encodeProposal: proposal => this.encodeProposal(proposal), restoreProposal: (path, proposal) => this.restoreProposal(path, proposal),
       isEditing: path => this.editors.editing(path), persist: entries => this.store.updateQueue(entries),
       propose: async (path, automatic, isCurrent) => {
         const note = await this.vault.note(path, !automatic), folders = this.catalog.snapshot(), settings = this.filingRevision;
-        return classifier.propose(note, folders, this.context(), { key: 'filing:' + path, priority: automatic ? 'filing' : 'manual', automatic, isCurrent: () => !this.disposed && isCurrent() && this.filingRevision === settings && this.vault.revision(path) === note.source.revision && this.catalog.snapshot().revision === folders.revision && this.vault.eligible(path) });
+        const prepared = prepareNote(note, this.settings().longNoteStrategy);
+        if (prepared.excerpt) this.excerpts.set(path, prepared.excerpt); else this.excerpts.delete(path);
+        this.events.emit();
+        return classifier.propose(prepared.note, folders, this.context(), { key: 'filing:' + path, priority: automatic ? 'filing' : 'manual', automatic, isCurrent: () => !this.disposed && isCurrent() && this.filingRevision === settings && this.vault.revision(path) === note.source.revision && this.catalog.snapshot().revision === folders.revision && this.vault.eligible(path) });
       },
     });
     this.moves = new ConfirmedMoveService({ source: path => this.vault.source(path), currentPath: id => this.vault.currentPath(id), exists: path => Boolean(this.plugin.app.vault.getAbstractFileByPath(path)), eligible: path => this.vault.eligible(path), referencesSafe: (path, destination) => this.vault.referencesSafe(path, destination), rename: (from, to) => this.vault.rename(from, to), folders: () => this.catalog.snapshot(), settingsRevision: () => this.filingRevision }, this.store.journal);
@@ -109,27 +118,36 @@ export class ObsidianOrganizer implements OrganizerController {
   }
   private start(): void {
     const { vault, metadataCache, workspace } = this.plugin.app;
-    this.plugin.registerEvent(vault.on('create', file => { if (file instanceof TFolder) this.refreshFolders(); else if (file instanceof TFile) { this.vault.metadata(file); if (this.vault.eligible(file.path)) this.queue.touch(file.path, true); } }));
-    this.plugin.registerEvent(vault.on('modify', file => { if (file instanceof TFile) { this.vault.touch(file); this.vault.metadata(file); this.invalidateLinks(); if (this.vault.eligible(file.path)) this.queue.touch(file.path, true); } }));
-    this.plugin.registerEvent(metadataCache.on('changed', file => { this.vault.metadata(file); this.invalidateLinks(); }));
+    this.plugin.registerEvent(vault.on('create', file => { if (file instanceof TFolder) this.refreshFolders(); else if (file instanceof TFile) { this.metadata(file); if (this.vault.eligible(file.path)) this.queue.touch(file.path, true); } }));
+    this.plugin.registerEvent(vault.on('modify', file => { if (file instanceof TFile) { this.vault.touch(file); this.metadata(file); this.invalidateLinks(); if (this.vault.eligible(file.path)) this.queue.touch(file.path, true); } }));
+    this.plugin.registerEvent(metadataCache.on('changed', file => { this.metadata(file); this.invalidateLinks(); }));
     this.plugin.registerEvent(vault.on('rename', (file, oldPath) => {
       if (file instanceof TFolder) {
+        this.removeProfilesUnder(oldPath);
         for (const entry of this.queue.entries()) if (within(entry.path, oldPath)) this.queue.rename(entry.path, file.path + entry.path.slice(oldPath.length));
-        for (const note of vault.getMarkdownFiles()) if (within(note.path, file.path)) { this.vault.touch(note); this.vault.metadata(note); }
+        for (const note of vault.getMarkdownFiles()) if (within(note.path, file.path)) { this.vault.touch(note); this.metadata(note); }
         if (within(this.settings().inbox, oldPath)) void this.saveSettings({ inbox: file.path + this.settings().inbox.slice(oldPath.length) }).catch(error => this.report(error));
         this.refreshFolders();
-      } else if (file instanceof TFile) { this.vault.touch(file); this.vault.metadata(file); this.queue.rename(oldPath, file.path); if (this.vault.eligible(file.path)) this.queue.touch(file.path, true); }
+      } else if (file instanceof TFile) { this.profiles.remove(oldPath); this.profilePaths.delete(oldPath); this.excerpts.delete(oldPath); this.vault.touch(file); this.metadata(file); this.queue.rename(oldPath, file.path); if (this.vault.eligible(file.path)) this.queue.touch(file.path, true); }
       this.invalidateLinks();
     }));
     this.plugin.registerEvent(vault.on('delete', file => {
-      if (file instanceof TFile) { this.vault.remove(file); this.queue.remove(file.path); }
-      else { this.vault.removeUnder(file.path); for (const entry of this.queue.entries()) if (within(entry.path, file.path)) this.queue.remove(entry.path); this.refreshFolders(); }
+      if (file instanceof TFile) { this.profiles.remove(file.path); this.profilePaths.delete(file.path); this.excerpts.delete(file.path); this.vault.remove(file); this.queue.remove(file.path); }
+      else { this.removeProfilesUnder(file.path); this.vault.removeUnder(file.path); for (const entry of this.queue.entries()) if (within(entry.path, file.path)) this.queue.remove(entry.path); this.refreshFolders(); }
       this.invalidateLinks();
     }));
     this.plugin.registerEvent(workspace.on('file-open', file => { if (!file) return; this.activePath = file.path; this.events.emit(); }));
     this.activePath = workspace.getActiveFile()?.path ?? null;
     void this.buildIndex();
   }
+  private readonly profilePaths = new Set<string>();
+  private metadata(file: TFile): void {
+    this.vault.metadata(file);
+    const id = this.vault.id(file.path), target = id === null ? undefined : this.index.get(id);
+    if (target) { this.profiles.upsert({ path: target.path, title: target.title, tags: target.tags }); this.profilePaths.add(target.path); }
+    else { this.profiles.remove(file.path); this.profilePaths.delete(file.path); }
+  }
+  private removeProfilesUnder(path: string): void { for (const item of this.profilePaths) if (within(item, path)) { this.profiles.remove(item); this.profilePaths.delete(item); } }
   private async buildIndex(): Promise<void> {
     const generation = ++this.generation;
     this.ready = false;
@@ -139,7 +157,7 @@ export class ObsidianOrganizer implements OrganizerController {
       const started = performance.now(); let count = 0;
       while (cursor < files.length && count++ < 250 && performance.now() - started < 4) {
         const file = files[cursor++];
-        if (file && this.vault.file(file.path) === file) this.vault.metadata(file);
+        if (file && this.vault.file(file.path) === file) this.metadata(file);
       }
       await new Promise<void>(resolve => setTimeout(resolve, 0));
     }
@@ -177,7 +195,7 @@ export class ObsidianOrganizer implements OrganizerController {
     if (previous !== this.links.length) this.events.emit();
   }
   private context(kind: 'filing' | 'link' = 'filing') { return { taskId: crypto.randomUUID(), settingsRevision: kind === 'filing' ? this.filingRevision : this.linkRevision, promptRevision: 1, modelId: this.settings().modelId }; }
-  state(): ReviewState { return { filing: this.filing, links: this.links.filter(link => link.input.anchor.sourcePath === this.activePath), activePath: this.activePath, network: this.scheduler.status(), indexReady: this.ready, message: this.message }; }
+  state(): ReviewState { return { filing: this.filing.map(entry => ({ ...entry, ...(this.excerpts.has(entry.path) ? { excerpt: this.excerpts.get(entry.path)! } : {}) })), links: this.links.filter(link => link.input.anchor.sourcePath === this.activePath), activePath: this.activePath, network: this.scheduler.status(), indexReady: this.ready, message: this.message }; }
   subscribe(listener: () => void) { return this.events.subscribe(listener); }
   settings(): OrganizerSettings { return this.configuration; }
   enabled(): boolean { return this.store.automaticEnabled(); }
@@ -189,12 +207,12 @@ export class ObsidianOrganizer implements OrganizerController {
       const filingChanged = filingSettingsKey(before) !== filingSettingsKey(settings), linksChanged = linkSettingsKey(before) !== linkSettingsKey(settings);
       const fingerprint = filingChanged ? await contentHash(filingSettingsKey(settings)) : this.filingFingerprint;
       await this.store.updateSettings(settings); this.configuration = this.store.snapshot().settings; this.filingFingerprint = fingerprint;
-      if (filingChanged) this.filingRevision++;
+      if (filingChanged) { this.filingRevision++; this.excerpts.clear(); }
       if (linksChanged) { this.linkRevision++; this.links = []; }
-      if (before.secretName !== settings.secretName || before.modelId !== settings.modelId) this.scheduler.setPaused(false);
+      if (before.secretName !== settings.secretName || before.modelId !== settings.modelId || before.provider !== settings.provider || before.endpoint !== settings.endpoint) this.scheduler.setPaused(false);
       const folderRevision = this.catalog.snapshot().revision; this.refreshFolders();
-      if (filingChanged && folderRevision === this.catalog.snapshot().revision) this.queue.invalidate(proposal => this.preserveProposal(proposal));
-      if (JSON.stringify(before.excludedPaths) !== JSON.stringify(settings.excludedPaths)) { this.index.clear(); void this.buildIndex(); }
+      if ((filingChanged || (before.autoFiling && !settings.autoFiling)) && folderRevision === this.catalog.snapshot().revision) this.queue.invalidate(proposal => this.preserveProposal(proposal));
+      if (JSON.stringify(before.excludedPaths) !== JSON.stringify(settings.excludedPaths)) { this.index.clear(); this.profiles.clear(); this.profilePaths.clear(); void this.buildIndex(); }
       this.events.emit();
     });
     this.settingsWrite = update.catch(() => undefined);
@@ -208,18 +226,20 @@ export class ObsidianOrganizer implements OrganizerController {
     const entries = new Map(this.queue.entries().map(entry => [entry.path, entry]));
     const selected = paths ? new Set(paths) : null;
     const notes = this.plugin.app.vault.getMarkdownFiles().filter(file => this.vault.eligible(file.path) && (!selected || selected.has(file.path)) && !['ignored', 'ready', 'analyzing', 'moving'].includes(entries.get(file.path)?.status ?? '')).sort((a, b) => b.stat.mtime - a.stat.mtime || a.path.localeCompare(b.path)).map(file => ({ path: file.path, modifiedAt: file.stat.mtime }));
-    const targets = this.catalog.snapshot().targets.length;
-    const min = targets > 254 ? Math.ceil(targets / 64) + 1 : targets ? 1 : 0;
-    const max = min * 3;
+    const targets = this.settings().folderProfilesEnabled ? this.profiles.enrich(this.catalog.snapshot().targets) : this.catalog.snapshot().targets;
+    const estimates = notes.map(note => estimateFilingRequests(targets, this.settings().longNoteStrategy === 'excerpt' ? Math.min(12000, this.vault.file(note.path)?.stat.size ?? 12000) : this.vault.file(note.path)?.stat.size ?? 30000));
+    const min = estimates.length ? Math.min(...estimates.map(item => item.min)) : 0;
+    const max = estimates.length ? Math.max(...estimates.map(item => item.max)) : 0;
     const remainingRequests = Math.max(0, this.settings().dailyRequestLimit - this.usage().requests);
-    return { notes, remainingRequests, requestsPerNote: { min, max }, recommendedCount: Math.min(notes.length, max ? Math.floor(remainingRequests / max) : notes.length) };
+    return { notes, remainingRequests, requestsPerNote: { min, max }, recommendedCount: Math.min(notes.length, max ? Math.max(remainingRequests >= min ? 1 : 0, Math.floor(remainingRequests / max)) : 0) };
   }
   analyzeInbox(paths: readonly string[] = []): void { for (const note of this.previewAnalysis(paths).notes) this.queue.analyze(note.path); }
   async readPreview(path: string): Promise<{ text: string; truncated: boolean }> {
     safePath(path);
     const file = this.vault.file(path);
     if (!file || (!this.vault.eligible(path) && !this.store.journal.records().some(record => record.to === path))) throw new OrganizerError('missing', '笔记已不存在。');
-    const text = await this.plugin.app.vault.cachedRead(file);
+    const vault = this.plugin.app.vault;
+    const text = await (typeof vault.cachedRead === 'function' ? vault.cachedRead(file) : vault.read(file));
     let end = Math.min(text.length, 20000);
     if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1] ?? '')) end--;
     return { text: text.slice(0, end), truncated: end < text.length };
@@ -236,7 +256,7 @@ export class ObsidianOrganizer implements OrganizerController {
     if (!target) throw new OrganizerError('stale', '目录设置已变化，请重新选择。');
     return target;
   }
-  analyzeNote(path: string): void { this.queue.analyze(path); }
+  analyzeNote(path: string): void { this.excerpts.delete(path); this.queue.analyze(path); }
   ignoreNote(path: string): void { this.scheduler.cancel('filing:' + path); this.queue.ignore(path); }
   restoreIgnored(): void { for (const entry of this.queue.entries()) if (entry.status === 'ignored') this.queue.resume(entry.path); }
   async prepareMove(path: string, target: string): Promise<MovePlan> {
@@ -256,7 +276,15 @@ export class ObsidianOrganizer implements OrganizerController {
     if (result.status !== 'done') throw new OrganizerError('stale', result.message);
     this.queue.mark(result.record.from, 'waiting', '已移回收件箱，需要时可重新分析。'); this.events.emit();
   }
-  async acknowledgeMove(id: string): Promise<void> { await this.moves.acknowledge(id); this.events.emit(); }
+  async acknowledgeMove(id: string): Promise<void> {
+    const record = this.store.journal.records().find(item => item.id === id);
+    await this.moves.acknowledge(id);
+    if (record?.status === 'review') {
+      if (this.vault.file(record.from) && this.vault.eligible(record.from)) this.queue.mark(record.from, 'waiting');
+      else this.queue.remove(record.from);
+    }
+    this.events.emit();
+  }
   recentMoves() { return this.store.journal.records(); }
   async findLinks(): Promise<void> {
     const session = this.editors.active(this.activePath);
@@ -289,5 +317,5 @@ export class ObsidianOrganizer implements OrganizerController {
   target(id: number) { return this.index.get(id); }
   async testConnection(): Promise<void> { this.scheduler.setPaused(false); await this.scheduler.evaluate({ modelId: this.settings().modelId, state: 'A short example about learning.', questions: [{ id: 'connection', instructions: 'Choose the matching subject.', options: [{ id: 'learning', description: 'Learning and reading' }, { id: 'none', description: 'Other' }] }] }, { key: 'connection', priority: 'manual', automatic: false, isCurrent: () => !this.disposed }); }
   private report(error: unknown): void { this.message = messageFor(error); this.events.emit(); }
-  dispose(): void { this.disposed = true; this.generation++; this.scheduler?.dispose(); this.queue?.dispose(); this.editors.dispose(); this.index.clear(); this.events.clear(); void this.store.flush().catch(() => undefined); }
+  dispose(): void { this.disposed = true; this.generation++; this.scheduler?.dispose(); this.queue?.dispose(); this.editors.dispose(); this.index.clear(); this.profiles.clear(); this.profilePaths.clear(); this.excerpts.clear(); this.events.clear(); void this.store.flush().catch(() => undefined); }
 }

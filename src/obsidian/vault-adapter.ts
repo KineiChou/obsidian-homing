@@ -4,6 +4,7 @@ import type { NoteSnapshot, SourceVersion } from '../filing/types';
 import { contentHash, excluded, inInbox, safePath, within } from '../core/paths';
 import { OrganizerError } from '../core/errors';
 import type { OrganizerSettings } from '../settings';
+import { inspectReferences, referencesSettled } from './reference-check';
 
 export class VaultAdapter {
   private sequence = 0;
@@ -44,22 +45,22 @@ export class VaultAdapter {
   async source(path: string): Promise<SourceVersion | null> {
     const file = this.file(path);
     if (!file) return null;
-    const noteId = this.identity(file), revision = this.revisions.get(noteId) ?? 0;
+    const noteId = this.identity(file), revision = this.revisions.get(noteId) ?? 0, modifiedAt = file.stat.mtime;
     const text = await this.app.vault.read(file);
     const active = this.app.workspace.activeEditor;
     if (active?.file === file && active.editor && active.editor.getValue() !== text) throw new OrganizerError('stale', '笔记仍在保存，请稍后重试。');
     const hash = await contentHash(text);
-    if (file.path !== path || this.file(path) !== file || revision !== this.revisions.get(noteId)) throw new OrganizerError('stale', '笔记已改变，请重新分析。');
+    if (file.path !== path || this.file(path) !== file || revision !== this.revisions.get(noteId) || file.stat.mtime !== modifiedAt) throw new OrganizerError('stale', '笔记已改变，请重新分析。');
     return { noteId, path, revision, contentHash: hash };
   }
   async note(path: string, manual: boolean): Promise<NoteSnapshot> {
     const file = this.file(path);
     if (!file || !this.eligible(path)) throw new OrganizerError('missing', '笔记不在当前收件箱范围内。');
-    const noteId = this.identity(file), revision = this.revisions.get(noteId) ?? 0;
+    const noteId = this.identity(file), revision = this.revisions.get(noteId) ?? 0, modifiedAt = file.stat.mtime;
     const active = this.app.workspace.activeEditor;
     const text = manual && active?.file === file && active.editor ? active.editor.getValue() : await this.app.vault.read(file);
     const hash = await contentHash(text);
-    if (file.path !== path || this.revisions.get(noteId) !== revision) throw new OrganizerError('stale', '笔记已改变，请重新分析。');
+    if (file.path !== path || this.revisions.get(noteId) !== revision || file.stat.mtime !== modifiedAt) throw new OrganizerError('stale', '笔记已改变，请重新分析。');
     const info = getFrontMatterInfo(text);
     let tags: string[] = [];
     if (info.exists) {
@@ -86,35 +87,22 @@ export class VaultAdapter {
     }
     return result;
   }
-  referencesSafe(path: string, destination: string): boolean {
-    const source = this.file(path), cache = source && this.app.metadataCache.getFileCache(source);
-    if (!source || !cache) return false;
-    const links = [...(cache.links ?? []), ...(cache.embeds ?? []), ...(cache.frontmatterLinks ?? [])];
-    for (const link of links) {
-      const targetPath = parseLinktext(link.link).path;
-      if (!targetPath || /^[a-z]+:/i.test(targetPath)) continue;
-      const before = this.app.metadataCache.getFirstLinkpathDest(targetPath, path);
-      const after = this.app.metadataCache.getFirstLinkpathDest(targetPath, destination);
-      if (before !== after || !before) return false;
-    }
-    const uniqueBasename = !this.app.vault.getMarkdownFiles().some(file => file !== source && file.basename === source.basename);
-    for (const [inboundPath, targets] of Object.entries(this.app.metadataCache.resolvedLinks)) {
-      if (!targets[path] || inboundPath === path) continue;
-      const inbound = this.file(inboundPath), metadata = inbound && this.app.metadataCache.getFileCache(inbound);
-      if (!metadata) return false;
-      for (const link of [...(metadata.links ?? []), ...(metadata.embeds ?? []), ...(metadata.frontmatterLinks ?? [])]) {
-        const linkPath = parseLinktext(link.link).path;
-        if (this.app.metadataCache.getFirstLinkpathDest(linkPath, inboundPath) !== source) continue;
-        if (linkPath.replace(/\.md$/, '') !== source.basename || !uniqueBasename) return false;
-      }
-    }
-    return true;
+  referencesSafe(path: string, destination: string): boolean | string {
+    const source = this.file(path);
+    return source ? inspectReferences(this.app, source, destination).issue ?? true : '笔记已不存在。';
   }
   async rename(from: string, to: string): Promise<void> {
     const file = this.file(from);
     if (!file || this.app.vault.getAbstractFileByPath(to)) throw new OrganizerError('conflict', '笔记已移动或目标位置已被占用。');
     const folder = this.app.vault.getAbstractFileByPath(to.slice(0, to.lastIndexOf('/')));
     if (!(folder instanceof TFolder)) throw new OrganizerError('missing', '目标目录已不存在。');
+    const inspection = inspectReferences(this.app, file, to);
+    if (inspection.issue) throw new OrganizerError('unsafe', inspection.issue);
     await this.app.fileManager.renameFile(file, to);
+    for (let attempt = 0; attempt < 20; attempt++) {
+      if (referencesSettled(this.app, inspection)) return;
+      await new Promise<void>(resolve => setTimeout(resolve, 50));
+    }
+    throw new OrganizerError('unsafe', '笔记已移动，但链接更新尚未核实，请检查移动记录。');
   }
 }
