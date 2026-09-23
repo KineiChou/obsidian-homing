@@ -16,7 +16,7 @@ export class ConfirmedLinkService implements LinkService {
     this.validate(anchor, target);
     const replacement = this.host.generateLink(target, anchor.sourcePath, anchor.originalText);
     if (!replacement || replacement === anchor.originalText || !this.host.resolvesTo(replacement, anchor.sourcePath, target)) {
-      throw new OrganizerError('unsafe', '无法安全生成指向该笔记的链接。');
+      throw new OrganizerError('unsafe', 'error.linkUnsafe');
     }
     const plan: LinkPlan = Object.freeze({ id: `link-plan-${++this.sequence}`, proposalId: proposal.id, anchor,
       target: Object.freeze({ ...target, aliases: Object.freeze([...target.aliases]), tags: Object.freeze([...target.tags]) }),
@@ -49,11 +49,11 @@ export class ConfirmedLinkService implements LinkService {
             (item.plan.anchor.from < plan.anchor.to && plan.anchor.from < item.plan.anchor.to))) this.stale();
         if (this.host.generateLink(target, plan.anchor.sourcePath, plan.anchor.originalText) !== plan.replacement ||
             !this.host.resolvesTo(plan.replacement, plan.anchor.sourcePath, target)) {
-          throw new OrganizerError('unsafe', '链接目标已改变，请重新查找。');
+          throw new OrganizerError('unsafe', 'error.linkTargetChanged');
         }
         accepted.push({ plan, editor });
       } catch (error) {
-        failures.push({ planId, error: error instanceof OrganizerError ? error : new OrganizerError('unsafe', '无法安全插入链接。') });
+        failures.push({ planId, error: error instanceof OrganizerError ? error : new OrganizerError('unsafe', 'error.linkInsertUnsafe') });
       }
     }
     if (!accepted.length) return { appliedPlanIds: [], failures };
@@ -71,7 +71,7 @@ export class ConfirmedLinkService implements LinkService {
       editor.rememberInsertions?.(insertions);
       return { appliedPlanIds: accepted.map(item => item.plan.id), failures };
     } catch (error) {
-      for (const { plan } of accepted) failures.push({ planId: plan.id, error: error instanceof OrganizerError ? error : new OrganizerError('unsafe', '无法安全插入链接。') });
+      for (const { plan } of accepted) failures.push({ planId: plan.id, error: error instanceof OrganizerError ? error : new OrganizerError('unsafe', 'error.linkInsertUnsafe') });
       return { appliedPlanIds: [], failures };
     }
   }
@@ -99,5 +99,5 @@ export class ConfirmedLinkService implements LinkService {
       a.description === b.description && a.aliases.length === b.aliases.length && a.tags.length === b.tags.length &&
       a.aliases.every((alias, i) => alias === b.aliases[i]) && a.tags.every((tag, i) => tag === b.tags[i]);
   }
-  private stale(): never { throw new OrganizerError('stale', '这条链接建议已过期，请重新查找。'); }
+  private stale(): never { throw new OrganizerError('stale', 'error.linkStale'); }
 }

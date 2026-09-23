@@ -18,7 +18,7 @@ function hash(path: string): number {
 function pathOrder(a: FolderTarget, b: FolderTarget): number { return a.path < b.path ? -1 : a.path > b.path ? 1 : 0; }
 function requireAnswer(answers: Readonly<Record<string, ChoiceAnswer>>, id: string): ChoiceAnswer {
   const value = answers[id];
-  if (!value) throw new OrganizerError('invalid-response', '分析结果不完整，请重试。');
+  if (!value) throw new OrganizerError('invalid-response', 'error.analysisIncomplete');
   return value;
 }
 export class MixedDepthClassifier implements FolderClassifier {
@@ -29,10 +29,10 @@ export class MixedDepthClassifier implements FolderClassifier {
     const prepared = prepareNote(note, options.longNoteStrategy);
     note = prepared.note;
     let targets = folders.targets;
-    if (!targets.length) throw new OrganizerError('missing', '当前范围没有可归档目录，请设置目录或手动整理。');
-    if (targets.length > 4096) throw new OrganizerError('limit', '归档目录超过分析范围，请缩小范围或手动整理。');
+    if (!targets.length) throw new OrganizerError('missing', 'error.noDestinations');
+    if (targets.length > 4096) throw new OrganizerError('limit', 'error.tooManyDestinations');
     if (new Set(targets.map(target => target.id)).size !== targets.length || targets.some(target => target.id === UNASSIGNED)) {
-      throw new OrganizerError('invalid-settings', '目录候选标识无效，请刷新目录。');
+      throw new OrganizerError('invalid-settings', 'error.destinationIds');
     }
     if (options.profiles) targets = options.profiles.prefilter(note, options.profiles.enrich(targets));
     const state: JsonValue = { note: { title: note.title, body: note.body, tags: note.tags } };
@@ -53,7 +53,7 @@ export class MixedDepthClassifier implements FolderClassifier {
         serializeBatch({ modelId, state, questions: [question('nominate', current)] });
       }
       if (current.length) groups.push(current);
-      if (groups.length > 64) throw new OrganizerError('limit', '目录说明需要过多分组，请缩小范围或手动整理。');
+      if (groups.length > 64) throw new OrganizerError('limit', 'error.tooManyGroups');
       const questions = groups.map((group, index) => question(`group${index}`, group));
       const batches = packQuestions(modelId, state, questions);
       const nominated = new Map<string, FolderTarget>();
@@ -61,7 +61,7 @@ export class MixedDepthClassifier implements FolderClassifier {
         assertCurrent(scope);
         const response = await this.scheduler.evaluate({ ...batch, modelId }, scope);
         assertCurrent(scope);
-        if (modelId !== 'jev-latest' && response.modelId !== modelId) throw new OrganizerError('invalid-response', '分析模型发生变化，请重新分析。');
+        if (modelId !== 'jev-latest' && response.modelId !== modelId) throw new OrganizerError('invalid-response', 'error.modelChanged');
         modelId = response.modelId;
         for (const item of batch.questions) {
           const index = Number(item.id.slice(5));
@@ -73,16 +73,16 @@ export class MixedDepthClassifier implements FolderClassifier {
         }
       }
       finalists = [...nominated.values()].sort(pathOrder);
-      if (!finalists.length || finalists.length > 192) throw new OrganizerError('limit', '决选候选超过分析预算，请手动整理。');
+      if (!finalists.length || finalists.length > 192) throw new OrganizerError('limit', 'error.tooManyFinalists');
     }
     assertCurrent(scope);
     const finalBatch = { modelId, state, questions: [question('destination', finalists)] };
     serializeBatch(finalBatch);
     const response = await this.scheduler.evaluate(finalBatch, scope);
     assertCurrent(scope);
-    if (modelId !== 'jev-latest' && response.modelId !== modelId) throw new OrganizerError('invalid-response', '分析模型发生变化，请重新分析。');
+    if (modelId !== 'jev-latest' && response.modelId !== modelId) throw new OrganizerError('invalid-response', 'error.modelChanged');
     const answer = requireAnswer(response.answers, 'destination');
-    if (answer.selected !== UNASSIGNED && !finalists.some(target => target.id === answer.selected)) throw new OrganizerError('invalid-response', '分析目标不属于本次目录范围。');
+    if (answer.selected !== UNASSIGNED && !finalists.some(target => target.id === answer.selected)) throw new OrganizerError('invalid-response', 'error.destinationOutsideScope');
     const proposal = {
       ...(prepared.excerpt ? { excerpt: prepared.excerpt } : {}),
       id: crypto.randomUUID(), source: { ...note.source }, foldersRevision: folders.revision, context: { ...context },

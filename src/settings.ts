@@ -36,7 +36,7 @@ export const DEFAULT_SETTINGS: OrganizerSettings = {
 };
 
 export function parseSettings(value: unknown): OrganizerSettings {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new OrganizerError('invalid-settings', '设置无法读取，请先恢复有效的配置文件。');
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new OrganizerError('invalid-settings', 'error.settingsUnreadable');
   const v = value as Record<string, unknown>;
   const string = (key: string, fallback: string) => v[key] === undefined ? fallback : typeof v[key] === 'string' ? v[key] : fail();
   const boolean = (key: string, fallback: boolean) => v[key] === undefined ? fallback : typeof v[key] === 'boolean' ? v[key] : fail();
@@ -73,4 +73,4 @@ export function parseSettings(value: unknown): OrganizerSettings {
     dailyRequestLimit: Number(limit), modelId,
   };
 }
-function fail(): never { throw new OrganizerError('invalid-settings', '设置格式无效，原始配置已保留。'); }
+function fail(): never { throw new OrganizerError('invalid-settings', 'error.settingsInvalid'); }

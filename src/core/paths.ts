@@ -4,7 +4,7 @@ export function safePath(value: string, allowRoot = false): string {
   const path = value.trim().replace(/\\/g, '/');
   if (allowRoot && path === '') return '';
   if (!path || path.startsWith('/') || /[\u0000-\u001f:]/.test(path) || path.split('/').some(part => !part || part === '.' || part === '..' || part.startsWith('.'))) {
-    throw new OrganizerError('unsafe', '请选择知识库内的有效路径。');
+    throw new OrganizerError('unsafe', 'error.pathInvalid');
   }
   return path;
 }
