@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { OrganizerError } from '../src/core/errors';
 import { MemoryFolderCatalog } from '../src/folders/catalog';
 import { PluginStateStore } from '../src/storage/state-store';
 import { StableInboxQueue } from '../src/filing/inbox-queue';
 import { ConfirmedMoveService } from '../src/filing/move-service';
 import { DEFAULT_SETTINGS, parseSettings } from '../src/settings';
 import { inInbox, contentHash } from '../src/core/paths';
-import type { FilingProposal, MoveHost } from '../src/filing/types';
+import type { FilingProposal, MoveHost, PersistedFilingProposal } from '../src/filing/types';
 import { context, deferred, memoryPort, note } from './helpers';
 
 const settings = { ...DEFAULT_SETTINGS, inbox: 'Inbox' };
@@ -98,6 +99,79 @@ describe('confirmed moves', () => {
     const f = await moveFixture(); const original = f.memory.port.save; let writes = 0;
     f.memory.port.save = async data => { writes++; if (writes === 2) throw Error('disk'); await original(data); };
     const plan = await f.service.prepare(f.path(), f.catalog.snapshot().targets[0]!.id); expect((await f.service.confirm(plan.id)).status).toBe('review');
-    expect(f.path()).toBe(plan.destination); expect((await f.service.confirm(plan.id)).status).toBe('stale'); await f.service.recover(); expect(f.host.rename).toHaveBeenCalledTimes(1);
+    expect(f.path()).toBe(plan.destination); expect((await f.service.confirm(plan.id)).status).toBe('stale'); await f.service.recover(); expect(f.host.rename).toHaveBeenCalledTimes(1); expect(f.store.journal.records()[0]?.status).toBe('archived');
   });
+});
+
+const savedProposal = (): PersistedFilingProposal => ({ contentHash: note.source.contentHash, selectedPath: 'Resources', ranked: [{ path: 'Resources', probability: 1 }], modelId: context.modelId, promptRevision: context.promptRevision, settingsFingerprint: 'settings', createdAt: 1 });
+
+describe('restorable suggestions', () => {
+  it('migrates v1 in memory and degrades only malformed proposals without overwriting the source', async () => {
+    const memory = memoryPort({ schemaVersion: 1, settings, moveJournal: [], filingQueue: [{ path: note.source.path, status: 'pending', proposal: { ...savedProposal(), ranked: [{ path: '../outside', probability: 1 }] } }] });
+    const store = new PluginStateStore(memory.port); await store.load();
+    expect(store.snapshot().schemaVersion).toBe(2); expect(store.snapshot().filingQueue[0]?.proposal).toBeUndefined(); expect(memory.port.save).not.toHaveBeenCalled();
+    await store.updateQueue([{ path: note.source.path, status: 'pending', proposal: savedProposal() }]);
+    const restarted = new PluginStateStore(memory.port); await restarted.load(); expect(restarted.snapshot().filingQueue[0]?.proposal).toEqual(savedProposal());
+  });
+  it('preserves a remapped suggestion and requeues invalid suggestions after stability delay', async () => {
+    vi.useFakeTimers(); const propose = vi.fn(async () => proposal());
+    const queue = new StableInboxQueue({ eligible: () => true, automaticEnabled: () => true, isEditing: () => false, propose, persist: async () => undefined, stableMs: 100 });
+    queue.analyze(note.source.path); await vi.advanceTimersByTimeAsync(0);
+    queue.invalidate(item => ({ ...item, foldersRevision: 2 })); await vi.advanceTimersByTimeAsync(1000);
+    expect(queue.entries()[0]?.proposal?.foldersRevision).toBe(2); expect(propose).toHaveBeenCalledTimes(1);
+    queue.invalidate(() => null); await vi.advanceTimersByTimeAsync(99); expect(propose).toHaveBeenCalledTimes(1); await vi.advanceTimersByTimeAsync(1); expect(propose).toHaveBeenCalledTimes(2); queue.dispose();
+  });
+  it('restores offline but cannot overwrite a concurrent edit or removal', async () => {
+    const restored = deferred<FilingProposal>(); const propose = vi.fn(async () => proposal());
+    const queue = new StableInboxQueue({ eligible: () => true, automaticEnabled: () => true, isEditing: () => false, propose, persist: async () => undefined, restoreProposal: () => restored.promise });
+    const loading = queue.restore([{ path: note.source.path, status: 'pending', proposal: savedProposal() }]);
+    queue.remove(note.source.path); restored.resolve(proposal()); await loading;
+    expect(queue.entries()).toEqual([]); expect(propose).not.toHaveBeenCalled(); queue.dispose();
+  });
+  it('persists minimal ready suggestions and restores them without scheduling analysis', async () => {
+    vi.useFakeTimers(); const persist = vi.fn(async () => undefined); const propose = vi.fn(async () => proposal());
+    const deps = { eligible: () => true, automaticEnabled: () => true, isEditing: () => false, propose, persist, encodeProposal: savedProposal, restoreProposal: async () => proposal() };
+    const queue = new StableInboxQueue(deps); queue.analyze(note.source.path); await vi.advanceTimersByTimeAsync(0);
+    expect(persist).toHaveBeenLastCalledWith([{ path: note.source.path, status: 'pending', proposal: savedProposal() }]); queue.dispose();
+    const restarted = new StableInboxQueue(deps); await restarted.restore([{ path: note.source.path, status: 'pending', proposal: savedProposal() }]); await vi.advanceTimersByTimeAsync(60000);
+    expect(restarted.entries()[0]?.status).toBe('ready'); expect(propose).toHaveBeenCalledTimes(1); restarted.dispose();
+  });
+  it('serializes queue submissions and leaves exhausted budget entries waiting', async () => {
+    vi.useFakeTimers(); const first = deferred<FilingProposal>(); const propose = vi.fn().mockReturnValueOnce(first.promise).mockRejectedValue(new OrganizerError('budget', '今日额度已用完。'));
+    const queue = new StableInboxQueue({ eligible: () => true, automaticEnabled: () => true, isEditing: () => false, propose, persist: async () => undefined });
+    queue.analyze('Inbox/a.md'); queue.analyze('Inbox/b.md'); await vi.advanceTimersByTimeAsync(0); expect(propose).toHaveBeenCalledTimes(1);
+    first.resolve(proposal()); await vi.advanceTimersByTimeAsync(1); expect(propose).toHaveBeenCalledTimes(2); expect(queue.entries().find(entry => entry.path.endsWith('b.md'))?.status).toBe('waiting'); queue.dispose();
+  });
+});
+
+describe('durable move recovery', () => {
+  it('archives successful history once, retains the bounded history, and never grants cross-session undo', async () => {
+    const f = await moveFixture();
+    for (let i = 0; i < 105; i++) await f.store.journal.put({ id: String(i), noteId: 10, from: note.source.path, to: 'Resources/n.md', contentHash: 'hash', createdAt: i, status: 'done' });
+    expect((await f.service.undo('104')).status).toBe('stale'); await f.service.recover(); await f.service.recover();
+    expect(f.store.journal.records()).toHaveLength(100); expect(f.store.journal.records().every(record => record.status === 'archived')).toBe(true); expect(f.host.rename).not.toHaveBeenCalled();
+  });
+  it('archives resolved intent, keeps ambiguous intent for review, and supports acknowledgement', async () => {
+    const f = await moveFixture(); const source = await f.host.source(f.path());
+    const record = { id: 'intent', noteId: 999, from: f.path(), to: 'Resources/n.md', contentHash: source!.contentHash, createdAt: 1, status: 'intent' as const };
+    await f.store.journal.put(record); await f.service.recover(); expect(f.store.journal.records()[0]?.status).toBe('archived');
+    await f.store.journal.put({ ...record, id: 'ambiguous', contentHash: 'different' }); await f.service.recover(); expect(f.store.journal.records().find(item => item.id === 'ambiguous')?.status).toBe('review');
+    await f.service.acknowledge('ambiguous'); expect(f.store.journal.records().find(item => item.id === 'ambiguous')?.status).toBe('archived'); expect(f.host.rename).not.toHaveBeenCalled();
+  });
+});
+
+it('returns the specific reference issue and never treats a warning string as approval', async () => {
+  const f = await moveFixture(); f.host.referencesSafe = () => '现有链接会改指另一篇笔记。';
+  await expect(f.service.prepare(f.path(), f.catalog.snapshot().targets[0]!.id)).rejects.toMatchObject({ code: 'unsafe', message: '现有链接会改指另一篇笔记。' });
+  expect(f.host.rename).not.toHaveBeenCalled();
+});
+
+it('never trims unresolved history while enforcing the completed history bound', async () => {
+  const f = await moveFixture();
+  const record = { noteId: 1, from: 'Inbox/a.md', to: 'Resources/a.md', contentHash: 'hash', createdAt: 1 };
+  await f.store.journal.put({ ...record, id: 'intent', status: 'intent' });
+  await f.store.journal.put({ ...record, id: 'review', status: 'review' });
+  for (let i = 0; i < 105; i++) await f.store.journal.put({ ...record, id: String(i), status: 'archived' });
+  expect(f.store.journal.records()).toHaveLength(102);
+  expect(f.store.journal.records().filter(item => item.status === 'intent' || item.status === 'review').map(item => item.id)).toEqual(['intent', 'review']);
 });
