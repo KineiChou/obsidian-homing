@@ -26,6 +26,7 @@ describe('Obsidian port integration', () => {
     });
     f.controller.analyzeInbox(); await vi.waitFor(() => expect(f.controller.state().filing[0]?.status).toBe('ready'));
     expect(f.controller.state().filing[0]?.status).toBe('ready'); expect(bodies).toHaveLength(1); expect(bodies[0]).not.toContain('private-property'); expect(bodies[0]).toContain('reading'); expect(f.app.fileManager.renameFile).not.toHaveBeenCalled();
+    expect((JSON.parse(bodies[0]!) as { state: unknown }).state).toEqual({ note: { title: 'Example', body: 'Useful reading note', tags: ['reading'] } });
     const target = f.controller.folders()[0]!; const plan = await f.controller.prepareMove(f.file.path, target.id); await f.controller.confirmMove(plan);
     expect(f.file.path).toBe('Resources/Example.md'); expect(f.controller.state().filing.some(entry => entry.status === 'done')).toBe(true);
     f.file.body = 'New content after filing'; f.app.vault.emit('modify', f.file); await f.controller.undoMove(plan.id);
