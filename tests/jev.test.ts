@@ -15,7 +15,7 @@ afterEach(() => vi.useRealTimers());
 
 describe('Jev boundary', () => {
   it('translates Choice responses and distinguishes unknown token usage', () => { expect(parseChoiceResponse(raw(), batch).inputTokens).toBe(17); const value = raw(); delete (value as { usage?: unknown }).usage; expect(parseChoiceResponse(value, batch).inputTokens).toBeNull(); });
-  it.each(['model', 'choice', 'probability', 'missing', 'confidence', 'usage'] as const)('rejects malformed %s', field => {
+  it.each(['model', 'choice', 'probability', 'missing', 'confidence', 'usage', 'selection'] as const)('rejects malformed %s', field => {
     const value = raw();
     if (field === 'model') value.model = 'jev-1.12.0';
     if (field === 'choice') value.answers.pick.choice = 'outside';
@@ -23,7 +23,32 @@ describe('Jev boundary', () => {
     if (field === 'missing') delete (value.answers.pick.probabilities as { no?: number }).no;
     if (field === 'confidence') value.answers.pick.confidence = -1;
     if (field === 'usage') value.usage.input_tokens = -1;
+    if (field === 'selection') value.answers.pick.choice = 'no';
     expect(() => parseChoiceResponse(value, batch)).toThrow();
+  });
+  it.each([
+    { total: .99, scores: [.68, .23, .05, .01, .02] },
+    { total: 1.01, scores: [.68, .24, .05, .02, .02] },
+  ])('normalizes a rounded total of $total without changing its ranking', ({ scores }) => {
+    const values = [...scores, ...Array<number>(60).fill(0)];
+    const options = values.map((_, index) => ({ id: `f${index}`, description: '' }));
+    const request = { ...batch, questions: [{ ...batch.questions[0]!, options }] };
+    const response = { model: context.modelId, answers: { pick: { type: 'choice', choice: 'f0', confidence: .66, probabilities: Object.fromEntries(values.map((value, index) => [`f${index}`, value])) } } };
+    const result = parseChoiceResponse(response, request).answers.pick!;
+    expect(result.selected).toBe('f0'); expect(result.confidence).toBe(.66);
+    expect(Object.values(result.probabilities).reduce((sum, value) => sum + value, 0)).toBeCloseTo(1, 12);
+    expect(result.probabilities.f0! / result.probabilities.f1!).toBeCloseTo(scores[0]! / scores[1]!, 12);
+    expect(result.probabilities.f64).toBe(0);
+  });
+  it.each([[0, 0], [.1, .1], [.9, .9]])('rejects a distribution inconsistent with rounding (%j)', (yes, no) => {
+    const value = raw(); value.answers.pick.probabilities = { yes, no };
+    expect(() => parseChoiceResponse(value, batch)).toThrow();
+  });
+  it('does not let zero-probability choices justify an excessive total', () => {
+    const options = Array.from({ length: 65 }, (_, index) => ({ id: `f${index}`, description: '' }));
+    const request = { ...batch, questions: [{ ...batch.questions[0]!, options }] };
+    const response = { model: context.modelId, answers: { pick: { type: 'choice', choice: 'f0', confidence: .66, probabilities: Object.fromEntries(options.map((option, index) => [option.id, index < 2 ? .6 : 0])) } } };
+    expect(() => parseChoiceResponse(response, request)).toThrow();
   });
   it('rejects 256 choices and oversized state before transport', () => {
     expect(() => serializeBatch({ ...batch, questions: [{ ...batch.questions[0]!, options: Array.from({ length: 256 }, (_, id) => ({ id: String(id), description: '' })) }] })).toThrow();
@@ -90,6 +115,23 @@ describe('classification and linking decisions', () => {
     const groups = seen.flatMap(request => request.questions).filter(question => question.id.startsWith('group'));
     expect(groups).toHaveLength(10); expect(new Set(groups.flatMap(question => question.options.filter(option => option.id !== 'unassigned').map(option => option.id))).size).toBe(600);
     expect(seen.at(-1)?.questions[0]?.options).toHaveLength(31);
+  });
+  it('carries the full note body through rounded group responses and the final decision', async () => {
+    const seen: { state: unknown; questions: Record<string, { criteria: Record<string, unknown> }> }[] = [];
+    const client = new JevClient({ post: async (_url, _headers, body) => {
+      const request = JSON.parse(body) as typeof seen[number]; seen.push(request);
+      return { status: 200, headers: {}, json: { model: context.modelId, answers: Object.fromEntries(Object.entries(request.questions).map(([id, question]) => {
+        const ids = Object.keys(question.criteria);
+        return [id, { type: 'choice', choice: ids[0], confidence: .66, probabilities: Object.fromEntries(ids.map((key, index) => [key, [.68, .23, .05, .01, .02][index] ?? 0])) }];
+      })) } };
+    } }, { get: () => 'test-credential' });
+    const input = { ...note, title: 'Study notes', body: 'First paragraph.\n\n' + 'A paragraph about object serialization.\n'.repeat(100) + '\nFinal body paragraph.', tags: ['reading'] };
+    const targets = Array.from({ length: 300 }, (_, i) => ({ id: 'f' + i, path: 'Folder' + i, directPurpose: '', effectiveRules: [] }));
+    const proposal = await new MixedDepthClassifier(immediate(vi.fn(request => client.evaluate(request)))).propose(input, { revision: 1, targets }, context, scope());
+    expect(proposal.selected).not.toBeNull(); expect(seen).toHaveLength(2);
+    expect(Object.keys(seen[0]!.questions)).toHaveLength(5);
+    expect(Object.keys(seen[1]!.questions)).toEqual(['destination']);
+    for (const request of seen) expect(request.state).toEqual({ note: { title: input.title, body: input.body, tags: input.tags } });
   });
   it('aborts between groups and final decision when snapshot changes', async () => {
     let current = true; const scheduler = immediate(vi.fn(async request => { current = false; return answer(request); }));

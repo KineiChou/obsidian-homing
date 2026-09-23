@@ -2,6 +2,9 @@ import { OrganizerError } from '../core/errors';
 import { serializeBatch } from './request';
 import type { ChoiceAnswer, ChoiceBatch, ChoiceBatchResult } from './types';
 
+const ROUNDING_RADIUS = 0.005;
+const FLOAT_TOLERANCE = 1e-9;
+
 function invalid(): never { throw new OrganizerError('invalid-response', '服务返回的选择结果无效，请重试。'); }
 function record(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) invalid();
@@ -31,14 +34,21 @@ export function parseChoiceResponse(value: unknown, batch: ChoiceBatch): ChoiceB
     if (Object.keys(raw).length !== options.length) invalid();
     const probabilities: Record<string, number> = Object.create(null) as Record<string, number>;
     let sum = 0;
+    let lowerTotal = 0;
+    let upperTotal = 0;
     for (const option of options) {
       if (!Object.hasOwn(raw, option)) invalid();
-      probabilities[option] = probability(raw[option]);
-      sum += probabilities[option];
+      const value = probability(raw[option]);
+      probabilities[option] = value;
+      sum += value;
+      // Jev rounds individual probabilities to hundredths; their sum can be 0.99 or 1.01.
+      lowerTotal += Math.max(0, value - ROUNDING_RADIUS);
+      upperTotal += Math.min(1, value + ROUNDING_RADIUS);
     }
-    if (Math.abs(sum - 1) > 0.001) invalid();
+    if (sum <= 0 || lowerTotal > 1 + FLOAT_TOLERANCE || upperTotal < 1 - FLOAT_TOLERANCE) invalid();
     const chosen = probabilities[answer.choice]!;
     if (Object.values(probabilities).some(value => value > chosen + 0.000001)) invalid();
+    for (const option of options) probabilities[option] = probabilities[option]! / sum;
     answers[question.id] = { selected: answer.choice, probabilities, confidence: probability(answer.confidence) };
   }
   let inputTokens: number | null = null;
