@@ -124,7 +124,7 @@ export class StableInboxQueue implements InboxQueue {
     });
     this.persistence = this.persistence.then(() => this.deps.persist(entries)).catch(() => {
       if (this.stopped) return;
-      for (const [path, entry] of this.items) this.items.set(path, { ...entry, message: '待办保存失败，请检查存储后重试。' });
+      for (const [path, entry] of this.items) this.items.set(path, { ...entry, message: 'error.queueStorage' });
       this.events.emit();
     });
   }

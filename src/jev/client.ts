@@ -9,21 +9,21 @@ export class JevClient implements DecisionClient {
     const body = serializeBatch(batch);
     let secret: string | null;
     try { secret = this.secrets.get(); }
-    catch { throw new OrganizerError('authentication', '无法读取 API 密钥，请重新选择凭据。'); }
-    if (!secret?.trim()) throw new OrganizerError('authentication', '请先选择有效的 API 密钥。');
+    catch { throw new OrganizerError('authentication', 'error.secretUnreadable'); }
+    if (!secret?.trim()) throw new OrganizerError('authentication', 'error.secretMissing');
     let response;
     try {
       response = await this.transport.post('https://api.typesafe.ai/v1/systemone', { Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json' }, body);
-    } catch { throw new OrganizerError('network', '无法连接分析服务，请检查网络后重试。'); }
-    if (response.status === 401 || response.status === 403) throw new OrganizerError('authentication', 'API 密钥无效或没有所选模型的访问权限。');
+    } catch { throw new OrganizerError('network', 'error.network'); }
+    if (response.status === 401 || response.status === 403) throw new OrganizerError('authentication', 'error.authentication');
     if (response.status === 429 || response.status >= 500) {
       const value = Object.entries(response.headers).find(([key]) => key.toLowerCase() === 'retry-after')?.[1];
       const seconds = value === undefined ? NaN : Number(value);
       const retryAfter = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(value ?? '') - Date.now();
-      throw new OrganizerError(response.status === 429 ? 'rate-limit' : 'service', '分析服务暂不可用，请稍后重试。', Number.isFinite(retryAfter) ? Math.max(0, retryAfter) : 0);
+      throw new OrganizerError(response.status === 429 ? 'rate-limit' : 'service', 'error.serviceUnavailable', Number.isFinite(retryAfter) ? Math.max(0, retryAfter) : 0);
     }
-    if (response.status === 413 || response.status === 422) throw new OrganizerError('limit', '服务无法处理本次输入，请缩小范围或手动处理。');
-    if (response.status < 200 || response.status >= 300) throw new OrganizerError('invalid-response', '分析请求未被服务接受，请检查模型设置。');
+    if (response.status === 413 || response.status === 422) throw new OrganizerError('limit', 'error.serviceInputLimit');
+    if (response.status < 200 || response.status >= 300) throw new OrganizerError('invalid-response', 'error.requestRejected');
     return parseChoiceResponse(response.json, batch);
   }
 }
