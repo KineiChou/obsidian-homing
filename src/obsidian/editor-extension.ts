@@ -61,15 +61,16 @@ export class NoteEditorSession implements EditorPort {
       this.dirty = this.dirty.map(range => ({ from: update.changes.mapPos(range.from, -1), to: update.changes.mapPos(range.to, 1) }));
       update.changes.iterChangedRanges((_from, _to, from, to) => { this.dirty.push({ from, to }); });
       this.dirty = this.dirty.slice(-8);
-      if (update.transactions.some(transaction => transaction.isUserEvent('undo'))) {
-        for (const previous of this.insertions) {
-          const from = update.changes.mapPos(previous.from, -1);
-          if (this.read(from, from + previous.original.length) === previous.original) {
-            this.suppressions.push({ from, to: from + previous.original.length, text: previous.original, target: previous.target });
-          }
+      const undo = update.transactions.some(transaction => transaction.isUserEvent('undo'));
+      this.insertions = this.insertions.flatMap(previous => {
+        const restoredFrom = update.changes.mapPos(previous.from, -1);
+        if (undo && this.read(restoredFrom, restoredFrom + previous.original.length) === previous.original) {
+          this.suppressions.push({ from: restoredFrom, to: restoredFrom + previous.original.length, text: previous.original, target: previous.target });
+          return [];
         }
-        this.insertions = [];
-      } else this.insertions = this.insertions.map(record => ({ ...record, from: update.changes.mapPos(record.from, -1) }));
+        const from = update.changes.mapPos(previous.from, 1);
+        return this.read(from, from + previous.replacement.length) === previous.replacement ? [{ ...previous, from }] : [];
+      });
       const revision = this.revision;
       if (this.path) this.bridge.changed(this.id, this.path, {
         dirtyRanges: [...this.dirty],
@@ -107,8 +108,12 @@ export class NoteEditorSession implements EditorPort {
     if (from > 0 && /[\uDC00-\uDFFF]/.test(this.read(from, from + 1))) from++;
     if (to < this.view.state.doc.length && /[\uD800-\uDBFF]/.test(this.read(to - 1, to))) to--;
     const dirtyRanges = options?.dirtyOnly ? [...this.dirty] : undefined;
-    if (options?.dirtyOnly) this.dirty = [];
     return { ...(dirtyRanges ? { dirtyRanges } : {}), sessionId: this.id, noteId, path, revision: this.revision, contextFrom: from, text: this.read(from, to), allowedRanges: this.allowedRanges(from, to), linkedNoteIds: this.bridge.linkedTargets(path) };
+  }
+  acknowledgeAnalysis(snapshot: EditorSnapshot): void {
+    if (snapshot.sessionId !== this.id || snapshot.revision !== this.revision) return;
+    const end = snapshot.contextFrom + snapshot.text.length;
+    this.dirty = this.dirty.filter(range => range.to < snapshot.contextFrom || range.from > end);
   }
   private allowedRanges(from: number, to: number): TextRange[] {
     const tree = syntaxTree(this.view.state);
@@ -153,7 +158,7 @@ export class NoteEditorSession implements EditorPort {
   }
   rememberInsertion(anchor: TextAnchor, replacement: string, target: number): void { this.rememberInsertions([{ anchor, replacement, target }]); }
   rememberInsertions(insertions: readonly LinkInsertion[]): void {
-    this.insertions = insertions.map(({ anchor, replacement, target }) => ({ from: anchor.from, original: anchor.originalText, replacement, target }));
+    this.insertions = [...this.insertions, ...insertions.map(({ anchor, replacement, target }) => ({ from: anchor.from, original: anchor.originalText, replacement, target }))].slice(-256);
   }
   suppress(anchor: TextAnchor, target: number | null): void { this.suppressions.push({ from: anchor.from, to: anchor.to, text: anchor.originalText, target }); this.suppressions = this.suppressions.slice(-256); }
   suppressed(anchor: TextAnchor): boolean { return this.suppressions.some(record => record.from === anchor.from && record.to === anchor.to && record.text === anchor.originalText); }

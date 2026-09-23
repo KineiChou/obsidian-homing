@@ -64,7 +64,7 @@ export class ObsidianOrganizer implements OrganizerController {
           return anchor ? [{ ...link, input: { ...link.input, anchor } }] : [];
         });
         this.excerpts.delete(path);
-        if (this.queue?.entries().some(entry => entry.path === path && !['ignored', 'done', 'moving', 'review'].includes(entry.status))) this.queue.mark(path, 'waiting', '内容已改变，等待保存后重新分析。');
+        if (this.queue?.entries().some(entry => entry.path === path && (entry.proposal !== undefined || entry.status === 'analyzing') && !['ignored', 'done', 'moving', 'review'].includes(entry.status))) this.queue.mark(path, 'waiting', '内容已改变，等待保存后重新分析。');
         this.message = null; this.events.emit();
       },
       idle: session => { if (this.enabled() && this.settings().autoLinks) void this.analyzeLinks(session, true); },
@@ -297,11 +297,12 @@ export class ObsidianOrganizer implements OrganizerController {
     const settingsRevision = this.linkRevision, epoch = this.index.epoch;
     const matcher = new LocalMentionMatcher(this.index);
     const inputs = matcher.inputs(snapshot, target => this.vault.allowed(target.path)).filter(input => !session.suppressed(input.anchor));
-    if (!inputs.length) { if (!automatic) { this.message = '暂未找到合适的链接。'; this.events.emit(); } return; }
+    if (!inputs.length) { session.acknowledgeAnalysis(snapshot); if (!automatic) { this.message = '暂未找到合适的链接。'; this.events.emit(); } return; }
     const isCurrent = () => !this.disposed && (!automatic || (this.enabled() && this.settings().autoLinks)) && this.linkRevision === settingsRevision && this.index.epoch === epoch && session.currentRevision === snapshot.revision && session.path === snapshot.path && this.vault.linkSource(snapshot.path) && inputs.every(input => input.candidates.every(target => this.index.get(target.noteId)?.revision === target.revision));
     try {
       const proposals = await this.recommender.propose(inputs, this.context('link'), { key: 'link:' + id, priority: automatic ? 'link' : 'manual', automatic, isCurrent });
       if (!isCurrent()) return;
+      session.acknowledgeAnalysis(snapshot);
       this.links = [...this.links.filter(existing => !inputs.some(input => input.anchor.editorSessionId === existing.input.anchor.editorSessionId && input.anchor.from === existing.input.anchor.from && input.anchor.to === existing.input.anchor.to)), ...proposals.filter(proposal => proposal.selected !== null)]; this.message = automatic ? null : this.links.length ? null : '暂未找到合适的链接。'; this.events.emit();
     } catch (error) { if (!automatic) { this.report(error); throw error; } }
   }
