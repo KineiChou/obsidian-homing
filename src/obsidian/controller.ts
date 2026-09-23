@@ -21,6 +21,7 @@ import type { LinkConfirmation, LinkPlan, LinkProposal } from '../linking/types'
 import type { FilingEntry, FilingProposal, PersistedFilingProposal, MovePlan } from '../filing/types';
 import { EditorSessions } from './editor-extension';
 import { VaultAdapter } from './vault-adapter';
+import { claimLifecycle, type LifecycleLease } from './lifecycle';
 import { estimateFilingRequests } from './analysis-estimate';
 import { filingSettingsKey, linkSettingsKey } from './settings-impact';
 
@@ -49,6 +50,10 @@ export class ObsidianOrganizer implements OrganizerController {
   private generation = 0;
   private ready = false;
   private disposed = false;
+  private initialization: Promise<void> | undefined;
+  private shutdown: Promise<void> | undefined;
+  private lifecycle: LifecycleLease | undefined;
+  private readonly operations = new Set<Promise<unknown>>();
   private message: string | null = null;
   private activePath: string | null = null;
   constructor(private readonly plugin: Plugin) {
@@ -71,10 +76,20 @@ export class ObsidianOrganizer implements OrganizerController {
       idle: session => { if (this.enabled() && this.settings().autoLinks) void this.analyzeLinks(session, true); },
     });
   }
-  async initialize(): Promise<void> {
+  initialize(): Promise<void> {
+    if (this.disposed) return Promise.reject(new OrganizerError('cancelled', 'error.analysisStopped'));
+    this.initialization ??= this.initializeState().catch(error => { void this.dispose(); throw error; });
+    return this.initialization;
+  }
+  private async initializeState(): Promise<void> {
+    this.lifecycle = claimLifecycle(this.plugin.app);
+    await this.lifecycle.previous;
+    this.assertActive();
     await this.store.load();
+    this.assertActive();
     this.configuration = this.store.snapshot().settings;
     this.filingFingerprint = await contentHash(filingSettingsKey(this.configuration));
+    this.assertActive();
     const client = createDecisionClient({ post: async (url, headers, body) => {
       try { const response = await requestUrl({ url, method: 'POST', headers: { ...headers }, body, throw: false }); let json: unknown = null; try { json = response.json; } catch { /* HTTP status remains authoritative for non-JSON failures. */ } return { status: response.status, headers: response.headers, json }; }
       catch { throw new OrganizerError('network', 'error.network'); }
@@ -109,9 +124,12 @@ export class ObsidianOrganizer implements OrganizerController {
       },
     });
     await this.queue.restore(this.store.snapshot().filingQueue);
+    this.assertActive();
     await this.queue.restore(this.plugin.app.vault.getMarkdownFiles().filter(file => this.vault.eligible(file.path)).map(file => ({ path: file.path, status: 'pending' as const })));
+    this.assertActive();
     this.filing = this.queue.entries();
     await this.moves.recover();
+    this.assertActive();
     this.plugin.register(this.queue.subscribe(() => { this.filing = this.queue.entries(); this.events.emit(); }));
     this.plugin.register(this.scheduler.subscribe(() => this.events.emit()));
     this.plugin.registerEditorExtension(this.editors.extension);
@@ -200,14 +218,16 @@ export class ObsidianOrganizer implements OrganizerController {
   subscribe(listener: () => void) { return this.events.subscribe(listener); }
   settings(): OrganizerSettings { return this.configuration; }
   enabled(): boolean { return this.store.automaticEnabled(); }
-  setEnabled(enabled: boolean): void { this.store.setAutomaticEnabled(enabled); if (!enabled) this.queue.invalidate(proposal => this.preserveProposal(proposal)); this.events.emit(); }
+  setEnabled(enabled: boolean): void { this.assertActive(); this.store.setAutomaticEnabled(enabled); if (!enabled) this.queue.invalidate(proposal => this.preserveProposal(proposal)); this.events.emit(); }
   saveSettings(patch: Partial<OrganizerSettings>): Promise<void> {
+    if (this.disposed) return Promise.reject(new OrganizerError('cancelled', 'error.analysisStopped'));
     const update = this.settingsWrite.then(async () => {
       const settings = parseSettings({ ...this.settings(), ...patch });
       const before = this.settings();
       const filingChanged = filingSettingsKey(before) !== filingSettingsKey(settings), linksChanged = linkSettingsKey(before) !== linkSettingsKey(settings);
       const fingerprint = filingChanged ? await contentHash(filingSettingsKey(settings)) : this.filingFingerprint;
       await this.store.updateSettings(settings); this.configuration = this.store.snapshot().settings; this.filingFingerprint = fingerprint;
+      if (this.disposed) return;
       if (filingChanged) { this.filingRevision++; this.excerpts.clear(); }
       if (linksChanged) { this.linkRevision++; this.links = []; }
       if (before.secretName !== settings.secretName || before.modelId !== settings.modelId || before.provider !== settings.provider || before.endpoint !== settings.endpoint) {
@@ -226,7 +246,7 @@ export class ObsidianOrganizer implements OrganizerController {
   usage() { return this.store.usage.read(); }
   folders() { return this.catalog.snapshot().targets; }
   allFolders() { return this.vault.allFolders(); }
-  async createInbox(path: string): Promise<void> { const validated = parseSettings({ ...this.settings(), inbox: path }); if (!this.plugin.app.vault.getAbstractFileByPath(validated.inbox)) await this.plugin.app.vault.createFolder(validated.inbox); await this.saveSettings({ inbox: validated.inbox }); }
+  createInbox(path: string): Promise<void> { return this.track(async () => { const validated = parseSettings({ ...this.settings(), inbox: path }); if (!this.plugin.app.vault.getAbstractFileByPath(validated.inbox)) await this.plugin.app.vault.createFolder(validated.inbox); await this.saveSettings({ inbox: validated.inbox }); }); }
   previewAnalysis(paths?: readonly string[]) {
     const entries = new Map(this.queue.entries().map(entry => [entry.path, entry]));
     const selected = paths ? new Set(paths) : null;
@@ -250,16 +270,18 @@ export class ObsidianOrganizer implements OrganizerController {
     return { text: text.slice(0, end), truncated: end < text.length };
   }
   async createDestination(path: string) {
-    const validated = safePath(path), probe = new MemoryFolderCatalog();
-    probe.refresh([validated], this.settings());
-    if (!probe.snapshot().targets.length) throw new OrganizerError('invalid-settings', 'host.destinationExcluded');
-    const existing = this.plugin.app.vault.getAbstractFileByPath(validated);
-    if (existing && !(existing instanceof TFolder)) throw new OrganizerError('conflict', 'host.pathOccupied');
-    if (!existing) await this.plugin.app.vault.createFolder(validated);
-    this.refreshFolders();
-    const target = this.catalog.snapshot().targets.find(target => target.path === validated);
-    if (!target) throw new OrganizerError('stale', 'host.folderChanged');
-    return target;
+    return this.track(async () => {
+      const validated = safePath(path), probe = new MemoryFolderCatalog();
+      probe.refresh([validated], this.settings());
+      if (!probe.snapshot().targets.length) throw new OrganizerError('invalid-settings', 'host.destinationExcluded');
+      const existing = this.plugin.app.vault.getAbstractFileByPath(validated);
+      if (existing && !(existing instanceof TFolder)) throw new OrganizerError('conflict', 'host.pathOccupied');
+      if (!existing) await this.plugin.app.vault.createFolder(validated);
+      this.refreshFolders();
+      const target = this.catalog.snapshot().targets.find(target => target.path === validated);
+      if (!target) throw new OrganizerError('stale', 'host.folderChanged');
+      return target;
+    });
   }
   analyzeNote(path: string): void { this.excerpts.delete(path); this.queue.analyze(path); }
   ignoreNote(path: string): void { this.scheduler.cancel('filing:' + path); this.queue.ignore(path); }
@@ -271,24 +293,30 @@ export class ObsidianOrganizer implements OrganizerController {
     return plan;
   }
   async confirmMove(plan: MovePlan): Promise<void> {
-    this.queue.mark(plan.source.path, 'moving');
-    const result = await this.moves.confirm(plan.id);
-    if (result.status === 'done') this.queue.mark(plan.source.path, 'done', 'organizer.done', result.record.id);
-    else { this.queue.mark(plan.source.path, result.status === 'review' ? 'review' : 'failed', result.message); throw new OrganizerError('stale', result.message); }
+    return this.track(async () => {
+      this.queue.mark(plan.source.path, 'moving');
+      const result = await this.moves.confirm(plan.id);
+      if (result.status === 'done') this.queue.mark(plan.source.path, 'done', 'organizer.done', result.record.id);
+      else { this.queue.mark(plan.source.path, result.status === 'review' ? 'review' : 'failed', result.message); throw new OrganizerError('stale', result.message); }
+    });
   }
   async undoMove(id: string): Promise<void> {
-    const result = await this.moves.undo(id);
-    if (result.status !== 'done') throw new OrganizerError('stale', result.message);
-    this.queue.mark(result.record.from, 'waiting', 'host.returned'); this.events.emit();
+    return this.track(async () => {
+      const result = await this.moves.undo(id);
+      if (result.status !== 'done') throw new OrganizerError('stale', result.message);
+      this.queue.mark(result.record.from, 'waiting', 'host.returned'); this.events.emit();
+    });
   }
   async acknowledgeMove(id: string): Promise<void> {
-    const record = this.store.journal.records().find(item => item.id === id);
-    await this.moves.acknowledge(id);
-    if (record?.status === 'review') {
-      if (this.vault.file(record.from) && this.vault.eligible(record.from)) this.queue.mark(record.from, 'waiting');
-      else this.queue.remove(record.from);
-    }
-    this.events.emit();
+    return this.track(async () => {
+      const record = this.store.journal.records().find(item => item.id === id);
+      await this.moves.acknowledge(id);
+      if (record?.status === 'review') {
+        if (this.vault.file(record.from) && this.vault.eligible(record.from)) this.queue.mark(record.from, 'waiting');
+        else this.queue.remove(record.from);
+      }
+      this.events.emit();
+    });
   }
   recentMoves() { return this.store.journal.records(); }
   async findLinks(): Promise<void> {
@@ -323,5 +351,24 @@ export class ObsidianOrganizer implements OrganizerController {
   target(id: number) { return this.index.get(id); }
   async testConnection(): Promise<void> { await this.settingsWrite; const requestRevision = this.requestRevision; this.scheduler.setPaused(false); await this.scheduler.evaluate({ modelId: this.settings().modelId, state: 'A short example about learning.', questions: [{ id: 'connection', instructions: 'Choose the matching subject.', options: [{ id: 'learning', description: 'Learning and reading' }, { id: 'none', description: 'Other' }] }] }, { key: 'connection', priority: 'manual', automatic: false, isCurrent: () => !this.disposed && this.requestRevision === requestRevision }); }
   private report(error: unknown): void { this.message = messageFor(error); this.events.emit(); }
-  dispose(): void { this.disposed = true; this.generation++; this.scheduler?.dispose(); this.queue?.dispose(); this.editors.dispose(); this.index.clear(); this.profiles.clear(); this.profilePaths.clear(); this.excerpts.clear(); this.events.clear(); void this.store.flush().catch(() => undefined); }
+  private assertActive(): void { if (this.disposed) throw new OrganizerError('cancelled', 'error.analysisStopped'); }
+  private track<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.disposed) return Promise.reject(new OrganizerError('cancelled', 'error.analysisStopped'));
+    const pending = Promise.resolve().then(operation); this.operations.add(pending);
+    void pending.then(() => this.operations.delete(pending), () => this.operations.delete(pending));
+    return pending;
+  }
+  dispose(): Promise<void> {
+    if (this.shutdown) return this.shutdown;
+    this.disposed = true; this.generation++; this.scheduler?.dispose(); this.queue?.dispose(); this.editors.dispose(); this.index.clear(); this.profiles.clear(); this.profilePaths.clear(); this.excerpts.clear(); this.events.clear();
+    this.shutdown = this.drain().finally(() => this.lifecycle?.release());
+    return this.shutdown;
+  }
+  private async drain(): Promise<void> {
+    // Initialization and confirmed moves may enqueue journal writes after a read
+    // or rename. Disposed schedulers leave late HTTP responses as unknown usage.
+    await Promise.allSettled([this.initialization, ...this.operations]);
+    await Promise.allSettled([this.settingsWrite, this.queue?.flush()]);
+    await this.store.flush();
+  }
 }

@@ -80,6 +80,7 @@ export class StableInboxQueue implements InboxQueue {
     }
     this.changed(); this.arm();
   }
+  flush(): Promise<void> { return this.persistence; }
   dispose(): void { this.stopped = true; if (this.timer !== undefined) clearTimeout(this.timer); this.pending.clear(); this.versions.clear(); this.events.clear(); }
   private cancel(path: string): void { this.pending.delete(path); this.versions.delete(path); }
   private schedule(path: string, automatic: boolean, due: number): void { const token = {}; this.versions.set(path, token); this.pending.set(path, { token, automatic, due }); this.arm(); }

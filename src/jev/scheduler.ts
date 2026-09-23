@@ -136,7 +136,9 @@ export class SharedDecisionScheduler implements DecisionScheduler {
     } catch (error) { failure = this.error(error); }
     finally {
       if (timeout) clearTimeout(timeout);
-      if (reserved) {
+      // After unload, retain the reservation as unknown. A late HTTP response
+      // must not settle through a stale usage snapshot owned by the old instance.
+      if (reserved && !this.disposed) {
         try { await this.usage.settle(result?.inputTokens ?? null); }
         catch { failure = new OrganizerError('storage', 'error.usageStorage'); }
       }
