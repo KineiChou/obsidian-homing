@@ -175,3 +175,11 @@ it('never trims unresolved history while enforcing the completed history bound',
   expect(f.store.journal.records()).toHaveLength(102);
   expect(f.store.journal.records().filter(item => item.status === 'intent' || item.status === 'review').map(item => item.id)).toEqual(['intent', 'review']);
 });
+
+it('keeps independently displayed banner and review plans until the source changes', async () => {
+  const f = await moveFixture(), folder = f.catalog.snapshot().targets[0]!.id;
+  const first = await f.service.prepare(f.path(), folder), second = await f.service.prepare(f.path(), folder);
+  expect((await f.service.confirm(first.id)).status).toBe('done');
+  expect((await f.service.confirm(second.id)).status).toBe('stale');
+  expect(f.host.rename).toHaveBeenCalledTimes(1);
+});

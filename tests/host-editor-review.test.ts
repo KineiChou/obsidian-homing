@@ -7,6 +7,7 @@ import type { MarkdownFileInfo, Plugin as ObsidianPlugin } from 'obsidian';
 import { ObsidianOrganizer } from '../src/obsidian/controller';
 import { contentHash } from '../src/core/paths';
 import { filingSettingsKey } from '../src/obsidian/settings-impact';
+import { filingBanner } from '../src/ui/filing-banner';
 import { DEFAULT_SETTINGS } from '../src/settings';
 import { FakeApp, Plugin, TFolder, editorInfoField, requestUrl } from './fakes/obsidian';
 
@@ -21,9 +22,11 @@ it('invalidates the actual queue on unsaved editing so folder events cannot revi
   expect(controller.state().filing[0]?.status).toBe('ready');
   const info = { file, editor: { getValue: () => view.state.doc.toString() } } as unknown as MarkdownFileInfo;
   app.workspace.activeEditor = info;
-  const view = new EditorView({ parent: document.body, state: EditorState.create({ doc: file.body, extensions: [markdown(), editorInfoField.init(() => info), controller.editors.extension] }) });
+  const view = new EditorView({ parent: document.body, state: EditorState.create({ doc: file.body, extensions: [markdown(), editorInfoField.init(() => info), controller.editors.extension, filingBanner(controller)] }) });
   cleanup.push(() => { view.destroy(); controller.dispose(); plugin.unload(); });
   await Promise.resolve(); await Promise.resolve();
+  expect(view.dom.querySelector('.note-organizer-banner')?.textContent).toContain('Resources');
+  expect(view.hasFocus).toBe(false);
   const savesBeforeEdit = plugin.saveData.mock.calls.length;
   view.dispatch({ changes: { from: file.body.length, insert: ' changed' } });
   await Promise.resolve(); await Promise.resolve();
@@ -31,6 +34,7 @@ it('invalidates the actual queue on unsaved editing so folder events cannot revi
   for (let i = 0; i < 20; i++) view.dispatch({ changes: { from: view.state.doc.length, insert: 'x' } });
   await Promise.resolve(); await Promise.resolve();
   expect(plugin.saveData.mock.calls.length).toBe(savesBeforeEdit + 1);
+  expect((view.dom.querySelector('.note-organizer-banner') as HTMLElement).hidden).toBe(true);
   expect(controller.state().filing[0]?.proposal).toBeUndefined();
   await app.vault.createFolder('Other'); expect(controller.state().filing[0]?.status).toBe('waiting'); expect(controller.state().filing[0]?.proposal).toBeUndefined(); expect(requestUrl).not.toHaveBeenCalled();
 });

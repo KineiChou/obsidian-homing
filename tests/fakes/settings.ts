@@ -40,6 +40,7 @@ export class Setting {
     this.descEl = this.settingEl.appendChild(document.createElement('div'));
     this.controlEl = this.settingEl.appendChild(document.createElement('div'));
   }
+  setHeading(): this { this.settingEl.classList.add('setting-item-heading'); return this; }
   setName(value: string): this { this.nameEl.textContent = value; return this; }
   setDesc(value: string): this { this.descEl.textContent = value; return this; }
   then(callback: (setting: this) => unknown): this { callback(this); return this; }
@@ -64,11 +65,13 @@ export class Modal {
   constructor(readonly app: unknown) {}
   setTitle(value: string): this { this.contentEl.setAttribute('aria-label', value); return this; }
   open(): void { document.body.appendChild(this.contentEl); this.onOpen(); }
-  close(): void { this.contentEl.remove(); }
+  close(): void { this.onClose(); this.contentEl.remove(); }
+  onClose(): void {}
   onOpen(): void {}
 }
 export abstract class FuzzySuggestModal<T> extends Modal {
   setPlaceholder(_value: string): void {}
+  getSuggestions(query: string) { return this.getItems().filter(item => this.getItemText(item).toLowerCase().includes(query.toLowerCase())).map(item => ({ item, match: { score: 0, matches: [] } })); }
   abstract getItems(): T[];
   abstract getItemText(item: T): string;
   abstract onChooseItem(item: T): void;

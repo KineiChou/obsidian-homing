@@ -62,6 +62,23 @@ export const errorEn = {
   "error.analysisTimeout": "The service response timed out. Waiting for the request already sent to finish.",
   "error.usageStorage": "The request finished, but usage could not be saved.",
   "error.pathInvalid": "Choose a valid path within the vault.",
-  "error.automaticLinkBudgetExceeded": "Today's automatic linking allowance is exhausted. Filing and manual linking remain available."
+  "error.automaticLinkBudgetExceeded": "Today's automatic linking allowance is exhausted. Filing and manual linking remain available.",
+  "host.contentChanged": "Content changed. Waiting for the note to be saved.",
+  "host.noteMissing": "The note no longer exists.",
+  "host.destinationExcluded": "This folder cannot be used as a filing destination.",
+  "host.pathOccupied": "A file already occupies this path.",
+  "host.folderChanged": "Folder settings changed. Select a destination again.",
+  "host.returned": "Returned to the inbox. Analyze again when needed.",
+  "host.openEditor": "Open a note in the editor first.",
+  "host.saving": "The note is still being saved. Try again shortly.",
+  "host.outsideInbox": "The note is outside the current inbox scope.",
+  "host.propertiesInvalid": "The note properties could not be parsed. Correct them before analyzing.",
+  "host.moveOccupied": "The note moved or the destination is occupied.",
+  "host.folderMissing": "The destination folder no longer exists.",
+  "host.linksUnverified": "The note moved, but link updates are not verified. Check the move record.",
+  "host.referenceIndex": "Links in {path} cannot be checked yet. Wait for indexing to finish.",
+  "host.referenceUnresolved": "The link {link} in {path} is unresolved. Check it before moving.",
+  "host.referenceOutgoing": "Moving will change {link} in {path}. Enable Automatically update internal links first.",
+  "host.referenceIncoming": "{path} references this note via {link}. Enable Automatically update internal links first."
 } as const;
 export type ErrorMessageKey = keyof typeof errorEn;

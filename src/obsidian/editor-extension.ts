@@ -152,7 +152,7 @@ export class NoteEditorSession implements EditorPort {
     const info = this.view.state.field(editorInfoField, false);
     const sorted = [...changes].sort((a, b) => a.from - b.from);
     if (!info?.editor || sorted.some((change, index) => !this.allows(change.from, change.to) ||
-        (index > 0 && sorted[index - 1]!.to > change.from))) throw new OrganizerError('stale', '文字已改变，请重新查找链接。');
+        (index > 0 && sorted[index - 1]!.to > change.from))) throw new OrganizerError('stale', 'error.linkStale');
     const editor = info.editor;
     editor.transaction({ changes: sorted.map(change => ({ from: editor.offsetToPos(change.from), to: editor.offsetToPos(change.to), text: change.replacement })) }, 'note-organizer');
   }

@@ -26,7 +26,6 @@ export class ConfirmedMoveService implements MoveService {
     const referenceIssue = this.referenceIssue(path, destination);
     if (referenceIssue) throw new OrganizerError('unsafe', referenceIssue);
     const plan: MovePlan = { id: `move-${Date.now()}-${++this.counter}`, source: { ...source }, destination, folderId, foldersRevision: folders.revision, settingsRevision };
-    for (const [id, existing] of this.plans) if (existing.source.noteId === source.noteId) this.plans.delete(id);
     if (this.plans.size >= 100) this.plans.delete(this.plans.keys().next().value as string);
     this.plans.set(plan.id, plan);
     return structuredClone(plan);

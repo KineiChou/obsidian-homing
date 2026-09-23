@@ -48,19 +48,19 @@ export class VaultAdapter {
     const noteId = this.identity(file), revision = this.revisions.get(noteId) ?? 0, modifiedAt = file.stat.mtime;
     const text = await this.app.vault.read(file);
     const active = this.app.workspace.activeEditor;
-    if (active?.file === file && active.editor && active.editor.getValue() !== text) throw new OrganizerError('stale', '笔记仍在保存，请稍后重试。');
+    if (active?.file === file && active.editor && active.editor.getValue() !== text) throw new OrganizerError('stale', 'host.saving');
     const hash = await contentHash(text);
-    if (file.path !== path || this.file(path) !== file || revision !== this.revisions.get(noteId) || file.stat.mtime !== modifiedAt) throw new OrganizerError('stale', '笔记已改变，请重新分析。');
+    if (file.path !== path || this.file(path) !== file || revision !== this.revisions.get(noteId) || file.stat.mtime !== modifiedAt) throw new OrganizerError('stale', 'error.analysisStale');
     return { noteId, path, revision, contentHash: hash };
   }
   async note(path: string, manual: boolean): Promise<NoteSnapshot> {
     const file = this.file(path);
-    if (!file || !this.eligible(path)) throw new OrganizerError('missing', '笔记不在当前收件箱范围内。');
+    if (!file || !this.eligible(path)) throw new OrganizerError('missing', 'host.outsideInbox');
     const noteId = this.identity(file), revision = this.revisions.get(noteId) ?? 0, modifiedAt = file.stat.mtime;
     const active = this.app.workspace.activeEditor;
     const text = manual && active?.file === file && active.editor ? active.editor.getValue() : await this.app.vault.read(file);
     const hash = await contentHash(text);
-    if (file.path !== path || this.revisions.get(noteId) !== revision || file.stat.mtime !== modifiedAt) throw new OrganizerError('stale', '笔记已改变，请重新分析。');
+    if (file.path !== path || this.revisions.get(noteId) !== revision || file.stat.mtime !== modifiedAt) throw new OrganizerError('stale', 'error.analysisStale');
     const info = getFrontMatterInfo(text);
     let tags: string[] = [];
     if (info.exists) {
@@ -70,7 +70,7 @@ export class VaultAdapter {
           const raw: unknown = (properties as Record<string, unknown>).tags;
           tags = (typeof raw === 'string' ? raw.split(/[,\s]+/) : Array.isArray(raw) ? raw.filter((item): item is string => typeof item === 'string') : []).slice(0, 8);
         }
-      } catch { throw new OrganizerError('unsafe', '笔记属性无法解析，请修正后再分析。'); }
+      } catch { throw new OrganizerError('unsafe', 'host.propertiesInvalid'); }
     }
     return { source: { noteId, path, revision, contentHash: hash }, title: file.basename, body: info.exists ? text.slice(info.contentStart) : text, tags };
   }
@@ -89,13 +89,13 @@ export class VaultAdapter {
   }
   referencesSafe(path: string, destination: string): boolean | string {
     const source = this.file(path);
-    return source ? inspectReferences(this.app, source, destination).issue ?? true : '笔记已不存在。';
+    return source ? inspectReferences(this.app, source, destination).issue ?? true : 'host.noteMissing';
   }
   async rename(from: string, to: string): Promise<void> {
     const file = this.file(from);
-    if (!file || this.app.vault.getAbstractFileByPath(to)) throw new OrganizerError('conflict', '笔记已移动或目标位置已被占用。');
+    if (!file || this.app.vault.getAbstractFileByPath(to)) throw new OrganizerError('conflict', 'host.moveOccupied');
     const folder = this.app.vault.getAbstractFileByPath(to.slice(0, to.lastIndexOf('/')));
-    if (!(folder instanceof TFolder)) throw new OrganizerError('missing', '目标目录已不存在。');
+    if (!(folder instanceof TFolder)) throw new OrganizerError('missing', 'host.folderMissing');
     const inspection = inspectReferences(this.app, file, to);
     if (inspection.issue) throw new OrganizerError('unsafe', inspection.issue);
     await this.app.fileManager.renameFile(file, to);
@@ -103,6 +103,6 @@ export class VaultAdapter {
       if (referencesSettled(this.app, inspection)) return;
       await new Promise<void>(resolve => setTimeout(resolve, 50));
     }
-    throw new OrganizerError('unsafe', '笔记已移动，但链接更新尚未核实，请检查移动记录。');
+    throw new OrganizerError('unsafe', 'host.linksUnverified');
   }
 }

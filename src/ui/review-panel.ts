@@ -1,140 +1,232 @@
 import type { OrganizerController } from './types';
 import type { FilingEntry, MovePlan } from '../filing/types';
-import type { LinkProposal, LinkPlan } from '../linking/types';
-import { button, details, node } from './dom';
-import { messageFor } from '../core/errors';
 import type { Unsubscribe } from '../core/events';
+import { button, details, node } from './dom';
+import { errorText, t, translateMessage } from '../i18n';
 
-export interface ReviewActions { settings(): void; folder(choose: (id: string) => void): void; target(proposal: LinkProposal, choose: (id: number) => void): void }
-interface Card { element: HTMLElement; signature: string }
+export interface ReviewActions {
+  settings(): void;
+  folder(choose: (id: string) => void): void;
+  analyze(paths?: readonly string[]): void;
+  preview(text: string, container: HTMLElement, path: string): Promise<(() => void) | void>;
+  menu(anchor: HTMLElement, items: readonly { title: string; run(): void }[]): void;
+}
+interface Row { element: HTMLElement; open: HTMLButtonElement; check: HTMLInputElement; description: HTMLElement; group: string }
+const groupFor = (entry: FilingEntry): string => entry.status === 'ready' ? 'ready' : ['analyzing', 'moving'].includes(entry.status) ? 'analyzing' : entry.status === 'done' ? 'done' : 'waiting';
+const basename = (path: string) => path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/, '');
+const breadcrumb = (path: string) => path.split('/').join(' › ');
+
 export class ReviewPanel {
-  private mode: 'current' | 'inbox';
-  private readonly cards = new Map<string, Card>();
-  private readonly list: HTMLElement;
-  private readonly status: HTMLElement;
-  private readonly pending: HTMLDetailsElement;
-  private readonly tabs: Record<'current' | 'inbox', HTMLButtonElement>;
+  private readonly rows = new Map<string, Row>();
+  private readonly groups = new Map<string, HTMLElement>();
+  private readonly checked = new Set<string>();
   private readonly unsubscribe: Unsubscribe;
-  private limit = 20;
+  private readonly list: HTMLElement;
+  private readonly detail: HTMLElement;
+  private readonly preview: HTMLElement;
+  private readonly title: HTMLElement;
+  private readonly status: HTMLElement;
+  private readonly controls: HTMLElement;
+  private readonly info: HTMLElement;
+  private readonly undoBar: HTMLElement;
+  private feedback = '';
+  private readonly recent: HTMLDetailsElement;
+  private readonly selectedCount: HTMLElement;
+  private readonly bulk: HTMLButtonElement;
+  private current: string | null = null;
+  private selectedDestination: string | null = null;
+  private signature = '';
+  private previewKey = '';
+  private plan: MovePlan | null = null;
+  private preparation = 0;
+  private previewRequest = 0;
+  private previewCleanup: (() => void) | undefined;
   private alive = true;
-  private shownPath: string | null = null;
-  private footerSignature = '';
+  private busy = false;
+  private acceptAfter = 0;
+  private guardTimer: ReturnType<typeof setTimeout> | undefined;
+  private lastMove: string | null = null;
+  private readonly keydown = (event: KeyboardEvent) => this.onKey(event);
   constructor(private readonly container: HTMLElement, private readonly controller: OrganizerController, private readonly actions: ReviewActions) {
-    container.classList.add('note-organizer');
-    this.mode = controller.state().links.length ? 'current' : 'inbox';
-    const head = node(container, 'div', undefined, 'note-organizer-head'); node(head, 'strong', '整理'); button(head, '设置', () => actions.settings());
-    const tabs = node(container, 'div', undefined, 'note-organizer-tabs');
-    this.tabs = { current: button(tabs, '当前笔记', () => this.select('current')), inbox: button(tabs, '收件箱', () => this.select('inbox')) };
-    this.status = node(container, 'p', '', 'note-organizer-muted');
-    this.list = node(container, 'div', undefined, 'note-organizer-list');
-    this.pending = details(this.list, '尚未确定位置');
+    container.classList.add('note-organizer', 'note-organizer-review'); container.tabIndex = 0;
+    const head = node(container, 'header', undefined, 'note-organizer-head'); node(head, 'h2', t('organizer.title'));
+    const toolbar = node(head, 'div', undefined, 'note-organizer-actions');
+    button(toolbar, t('organizer.settings'), () => actions.settings()); button(toolbar, t('organizer.analyze'), () => actions.analyze());
+    this.status = node(container, 'p', '', 'note-organizer-muted'); this.status.setAttribute('role', 'status');
+    const layout = node(container, 'div', undefined, 'note-organizer-layout');
+    const sidebar = node(layout, 'aside', undefined, 'note-organizer-queue');
+    const selection = node(sidebar, 'div', undefined, 'note-organizer-selection');
+    this.selectedCount = node(selection, 'span'); this.bulk = button(selection, t('organizer.analyzeSelected'), () => actions.analyze([...this.checked]));
+    this.list = node(sidebar, 'nav', undefined, 'note-organizer-list'); this.list.setAttribute('aria-label', t('organizer.title'));
+    for (const group of ['ready', 'analyzing', 'waiting', 'done'] as const) {
+      const area = group === 'waiting' ? details(this.list, t('organizer.waiting')) : node(this.list, 'section');
+      if (group !== 'waiting') node(area, 'h3', t(`organizer.${group}`));
+      this.groups.set(group, area);
+    }
+    this.detail = node(layout, 'section', undefined, 'note-organizer-detail');
+    const detailHead = node(this.detail, 'header', undefined, 'note-organizer-detail-head');
+    this.title = node(detailHead, 'h3'); button(detailHead, t('organizer.openNote'), () => { const path = this.previewPath(); if (path) controller.openNote(path); });
+    this.info = node(this.detail, 'p', '', 'note-organizer-muted');
+    this.preview = node(this.detail, 'article', undefined, 'note-organizer-preview markdown-rendered');
+    this.controls = node(this.detail, 'footer', undefined, 'note-organizer-action-bar');
+    this.undoBar = node(container, 'div', undefined, 'note-organizer-undo'); this.undoBar.setAttribute('role', 'status'); this.undoBar.hidden = true;
+    this.recent = details(container, t('organizer.recent'));
+    container.addEventListener('keydown', this.keydown);
     this.unsubscribe = controller.subscribe(() => this.render()); this.render();
   }
-  private select(mode: 'current' | 'inbox'): void { this.mode = mode; this.cards.clear(); this.list.replaceChildren(this.pending); this.pending.replaceChildren(); node(this.pending, 'summary', '尚未确定位置'); this.render(); }
-  showCurrent(): void { this.select('current'); }
+  private entries(): readonly FilingEntry[] { return this.controller.state().filing.filter(entry => entry.status !== 'ignored'); }
+  private selected(): FilingEntry | undefined { return this.entries().find(entry => entry.path === this.current); }
+  private previewPath(): string | null { const entry = this.selected(); return entry?.status === 'done' ? this.controller.recentMoves().find(record => record.id === entry.moveRecordId)?.to ?? entry.path : entry?.path ?? null; }
   private render(): void {
     if (!this.alive) return;
-    const state = this.controller.state();
-    if (this.mode === 'current' && this.shownPath !== state.activePath) { this.cards.clear(); this.list.replaceChildren(this.pending); }
-    this.shownPath = state.activePath;
-    for (const mode of ['current', 'inbox'] as const) this.tabs[mode].setAttribute('aria-pressed', String(this.mode === mode));
-    this.status.textContent = state.network.reason || (this.mode === 'current' ? state.message || (state.indexReady ? '需要时确认一处链接。' : '正在准备笔记索引…') : '准备好时再整理。关闭面板，笔记会留在原处。');
-    if (!this.controller.settings().secretName || !this.controller.settings().inbox) {
-      this.list.replaceChildren(); this.cards.clear(); node(this.list, 'p', '选择收件箱和 Jev 连接后，即可准备整理建议。'); button(this.list, '设置整理', () => this.actions.settings()); return;
-    }
-    if (!this.list.contains(this.pending)) this.list.append(this.pending);
-    const entries = this.mode === 'inbox' ? state.filing.filter(entry => entry.status !== 'ignored').slice(0, this.limit) : state.links;
-    this.pending.hidden = this.mode !== 'inbox' || !entries.some(entry => 'status' in entry && ['waiting', 'unassigned'].includes(entry.status));
-    const ids = new Set<string>();
+    const entries = this.entries(), paths = new Set(entries.map(entry => entry.path));
+    const network = this.controller.state().network;
+    this.status.textContent = this.feedback || (network.reason ? translateMessage(network.reason) : !this.controller.settings().inbox ? t('organizer.pickInbox') : entries.length ? '' : t('organizer.empty'));
+    if (!this.current || !paths.has(this.current)) { this.current = entries.find(entry => entry.status === 'ready')?.path ?? entries[0]?.path ?? null; this.selectedDestination = null; this.signature = ''; }
+    for (const [path, row] of this.rows) if (!paths.has(path)) { row.element.remove(); this.rows.delete(path); this.checked.delete(path); }
     for (const entry of entries) {
-      const filing = 'status' in entry, key = filing ? entry.path : entry.id;
-      ids.add(key);
-      const signature = JSON.stringify(entry);
-      let card = this.cards.get(key);
-      const parent = filing && ['waiting', 'unassigned'].includes(entry.status) ? this.pending : this.list;
-      if (!card) { card = { element: node(parent, 'section', undefined, 'note-organizer-card'), signature: '' }; if (parent === this.list) parent.insertBefore(card.element, this.pending); this.cards.set(key, card); }
-      else if (card.element.parentElement !== parent && !card.element.contains(containerActive(this.container))) { if (parent === this.list) parent.insertBefore(card.element, this.pending); else parent.append(card.element); }
-      if (card.signature === signature) continue;
-      const current = card;
-      const update = () => { if (!this.alive) return; current.signature = signature; current.element.replaceChildren(); if (filing) this.filing(current.element, entry); else this.link(current.element, entry); };
-      if (current.element.contains(containerActive(this.container)) && current.signature && !(filing && ['moving', 'done', 'failed', 'review'].includes(entry.status))) {
-        current.element.querySelectorAll('button').forEach(control => { control.disabled = true; });
-        current.element.addEventListener('focusout', update, { once: true });
-      } else update();
+      let row = this.rows.get(entry.path);
+      if (!row) {
+        const group = groupFor(entry), element = node(this.groups.get(group)!, 'div', undefined, 'note-organizer-row');
+        const label = node(element, 'label'); const check = node(label, 'input'); check.type = 'checkbox'; check.setAttribute('aria-label', t('organizer.selectNote', { name: basename(entry.path) }));
+        check.addEventListener('change', () => { if (check.checked) this.checked.add(entry.path); else this.checked.delete(entry.path); this.updateSelection(); });
+        const open = button(element, basename(entry.path), () => this.select(entry.path));
+        const description = node(open, 'span', '', 'note-organizer-row-path');
+        row = { element, open, check, description, group }; this.rows.set(entry.path, row);
+      }
+      const group = groupFor(entry);
+      if (row.group !== group) {
+        const active = row.element.contains(this.container.ownerDocument.activeElement) ? this.container.ownerDocument.activeElement as HTMLElement : null;
+        this.groups.get(group)!.append(row.element); row.group = group; active?.focus({ preventScroll: true });
+      }
+      row.check.checked = this.checked.has(entry.path); row.check.disabled = entry.status === 'done' || entry.status === 'moving';
+      if (row.check.disabled) { this.checked.delete(entry.path); row.check.checked = false; }
+      const target = this.controller.folders().find(folder => folder.id === entry.proposal?.selected);
+      row.description.textContent = entry.status === 'done' ? t('organizer.done') : entry.status === 'analyzing' ? t('organizer.preparing') : target ? '→ ' + breadcrumb(target.path) : entry.message ? translateMessage(entry.message) : t('organizer.waiting');
+      row.open.setAttribute('aria-current', String(entry.path === this.current));
     }
-    for (const [key, card] of this.cards) if (!ids.has(key)) {
-      if (card.element.dataset.completed === 'true' && this.mode === 'current') continue;
-      card.element.remove(); this.cards.delete(key);
+    this.updateSelection();
+    for (const [group, area] of this.groups) area.hidden = ![...this.rows.values()].some(row => row.group === group);
+    this.renderHistory(); this.renderUndo();
+    const selected = this.selected();
+    if (!selected) { this.detail.hidden = true; return; }
+    this.detail.hidden = false;
+    const signature = this.detailSignature(selected);
+    if (signature !== this.signature) { this.signature = signature; this.renderDetail(selected); }
+  }
+  private detailSignature(entry: FilingEntry): string { return JSON.stringify([entry, this.selectedDestination, this.controller.folders().filter(folder => folder.id === this.selectedDestination || folder.id === entry.proposal?.selected || entry.proposal?.ranked.some(item => item.targetId === folder.id)), this.busy]); }
+  private updateSelection(): void { this.selectedCount.textContent = t('organizer.selectedCount', { count: this.checked.size }); this.bulk.disabled = this.checked.size === 0; }
+  private select(path: string): void {
+    if (!this.rows.has(path)) return;
+    this.feedback = ''; this.current = path; this.selectedDestination = null; this.signature = ''; this.plan = null; this.preparation++;
+    for (const entry of this.entries()) {
+      const row = this.rows.get(entry.path)!; const group = groupFor(entry);
+      if (row.group !== group) { this.groups.get(group)!.append(row.element); row.group = group; }
     }
-    const previousFooter = this.list.querySelector<HTMLElement>('.note-organizer-footer');
-    const recentMoves = this.controller.recentMoves().slice(-20).reverse();
-    const footerSignature = JSON.stringify([this.mode, state.links.length > 0, state.filing.length > this.limit, recentMoves]);
-    if (previousFooter && this.footerSignature === footerSignature) return;
-    if (previousFooter?.contains(containerActive(this.container))) {
-      if (!previousFooter.dataset.refresh) { previousFooter.dataset.refresh = 'pending'; previousFooter.addEventListener('focusout', () => { delete previousFooter.dataset.refresh; this.render(); }, { once: true }); }
-      return;
-    }
-    this.footerSignature = footerSignature;
-    previousFooter?.remove();
-    const footer = node(this.list, 'div', undefined, 'note-organizer-footer');
-    if (this.mode === 'current') button(footer, state.links.length ? '重新查找' : '查找链接', () => { void this.run(footer, () => this.controller.findLinks()); });
-    else {
-      button(footer, '分析已有笔记', () => this.controller.analyzeInbox());
-      if (state.filing.length > this.limit) button(footer, '显示更多', () => { this.limit += 20; this.render(); });
-      const recent = details(footer, '最近操作');
-      for (const record of recentMoves) {
-        const row = node(recent, 'div', undefined, 'note-organizer-recent'); node(row, 'span', record.to);
-        if (record.status === 'done') button(row, '撤销', () => { void this.run(row, () => this.controller.undoMove(record.id)); });
-        else node(row, 'p', record.status === 'review' || record.status === 'intent' ? record.message || '请核对笔记当前位置。' : '已撤销', 'note-organizer-muted');
+    this.render();
+  }
+  private renderDetail(entry: FilingEntry): void {
+    this.title.textContent = basename(entry.path);
+    const path = this.previewPath()!;
+    const previewKey = JSON.stringify([path, entry.proposal?.source.contentHash ?? entry.updatedAt]);
+    if (this.previewKey !== previewKey) { this.previewKey = previewKey; void this.showPreview(path); }
+    const active = this.controls.contains(this.container.ownerDocument.activeElement) ? (this.container.ownerDocument.activeElement as HTMLElement)?.dataset.action : undefined;
+    this.controls.replaceChildren(); this.plan = null; this.preparation++;
+    const excerpt = entry.proposal?.excerpt ?? entry.excerpt;
+    this.info.textContent = excerpt ? t('organizer.excerpt', { sent: excerpt.sentChars, total: excerpt.originalChars }) : '';
+    if (entry.status === 'done') { node(this.controls, 'span', t('organizer.done')); if (entry.moveRecordId) button(this.controls, t('organizer.undo'), () => { void this.run(() => this.controller.undoMove(entry.moveRecordId!)); }); return; }
+    if (entry.status === 'moving' || this.busy) { node(this.controls, 'span', t('organizer.moving')); return; }
+    if (entry.status === 'analyzing') node(this.controls, 'span', t('organizer.preparing'));
+    else if (entry.message) node(this.controls, 'span', translateMessage(entry.message), 'note-organizer-feedback');
+    const accept = button(this.controls, t('organizer.file'), () => { void this.accept(); }, true); accept.dataset.action = 'accept'; accept.disabled = true; accept.hidden = true;
+    const destination = node(this.controls, 'span', '', 'note-organizer-path');
+    const prepare = async (id: string) => {
+      const generation = ++this.preparation; this.plan = null; accept.disabled = true;
+      try {
+        const plan = await this.controller.prepareMove(entry.path, id);
+        if (!this.alive || generation !== this.preparation || this.current !== entry.path) return;
+        this.plan = plan; this.signature = this.detailSignature(entry); const folder = this.controller.folders().find(value => value.id === id);
+        accept.textContent = t('organizer.moveTo', { path: breadcrumb(folder?.path ?? plan.destination) }); accept.hidden = false;
+        accept.disabled = Date.now() < this.acceptAfter; destination.textContent = '';
+        clearTimeout(this.guardTimer); if (accept.disabled) this.guardTimer = setTimeout(() => { if (this.plan?.id === plan.id && !this.busy) accept.disabled = false; }, this.acceptAfter - Date.now());
+      } catch (error) { if (generation === this.preparation && this.current === entry.path) destination.textContent = errorText(error); }
+    };
+    const targetId = this.selectedDestination ?? entry.proposal?.selected;
+    if (targetId) void prepare(targetId);
+    else if (entry.status !== 'analyzing') button(this.controls, t('organizer.analyzeOne'), () => this.controller.analyzeNote(entry.path));
+    const choose = button(this.controls, t('organizer.choose'), () => this.actions.folder(id => this.chooseDestination(entry.path, id))); choose.dataset.action = 'choose';
+    const skip = button(this.controls, t('organizer.skip'), () => this.next(1)); skip.dataset.action = 'skip';
+    const more = button(this.controls, '…', () => this.actions.menu(more, [{ title: t('organizer.ignore'), run: () => { this.controller.ignoreNote(entry.path); } }])); more.setAttribute('aria-label', t('organizer.more')); more.dataset.action = 'more';
+    const ranked = entry.proposal?.ranked ?? [];
+    if (ranked.length > 1 && ranked[0]!.probability - ranked[1]!.probability < .2) {
+      const alternatives = node(this.controls, 'div', undefined, 'note-organizer-alternatives'); node(alternatives, 'span', t('organizer.alternatives'));
+      for (const candidate of ranked.filter(candidate => candidate.targetId !== entry.proposal?.selected).slice(0, 2)) {
+        const folder = this.controller.folders().find(folder => folder.id === candidate.targetId);
+        if (folder) button(alternatives, breadcrumb(folder.path), () => this.chooseDestination(entry.path, folder.id));
       }
     }
+    if (active) this.controls.querySelector<HTMLButtonElement>(`[data-action="${active}"]`)?.focus({ preventScroll: true });
   }
-  private filing(row: HTMLElement, entry: FilingEntry): void {
-    button(row, entry.path.slice(entry.path.lastIndexOf('/') + 1), () => this.controller.openNote(entry.status === 'done' ? this.controller.recentMoves().find(record => record.id === entry.moveRecordId)?.to ?? entry.path : entry.path));
-    if (entry.status === 'done') { node(row, 'p', '已归档'); if (entry.moveRecordId) button(row, '撤销', () => { void this.run(row, () => this.controller.undoMove(entry.moveRecordId!)); }); return; }
-    if (entry.status === 'review') { node(row, 'p', entry.message || '请核对笔记当前位置。'); return; }
-    if (entry.status === 'analyzing' || entry.status === 'moving') { node(row, 'p', entry.status === 'moving' ? '正在归档…' : '正在准备建议…', 'note-organizer-muted'); return; }
-    const destination = node(row, 'p', entry.message ?? '', 'note-organizer-path');
-    const controls = node(row, 'div', undefined, 'note-organizer-actions');
-    let plan: MovePlan | null = null;
-    let preparation = 0;
-    const confirm = button(controls, '归档', () => { if (!plan) return; row.style.minHeight = row.getBoundingClientRect().height + 'px'; confirm.disabled = true; const shown = plan; void this.run(row, async () => { await this.controller.confirmMove(shown); row.replaceChildren(); node(row, 'p', '已归档'); node(row, 'p', shown.destination, 'note-organizer-path'); button(row, '撤销', () => { void this.run(row, () => this.controller.undoMove(shown.id)); }); }); }, true);
-    confirm.disabled = true; confirm.hidden = true;
-    const prepare = async (id: string) => {
-      const request = ++preparation;
-      plan = null; confirm.disabled = true;
-      const target = this.controller.folders().find(folder => folder.id === id);
-      destination.textContent = target ? '建议移到 ' + target.path + '/' + entry.path.slice(entry.path.lastIndexOf('/') + 1) : '请选择位置。';
-      try { const value = await this.controller.prepareMove(entry.path, id); if (request !== preparation || !row.isConnected || !this.alive) return; plan = value; destination.textContent = '建议移到 ' + value.destination; confirm.hidden = false; confirm.disabled = false; }
-      catch (error) { if (request === preparation) destination.textContent = messageFor(error); }
-    };
-    if (entry.proposal?.selected) void prepare(entry.proposal.selected);
-    else { destination.textContent ||= entry.status === 'unassigned' ? '尚未确定位置。' : '需要时分析这篇笔记。'; button(controls, '分析', () => this.controller.analyzeNote(entry.path)); }
-    button(controls, entry.proposal?.selected ? '更改位置' : '选择位置', () => this.actions.folder(id => { void prepare(id); }));
-    const more = details(row, '更多'); button(more, '不再建议这篇', () => this.controller.ignoreNote(entry.path));
+  private chooseDestination(path: string, id: string): void { if (this.current !== path) return; this.selectedDestination = id; this.signature = ''; this.render(); }
+  private async showPreview(path: string): Promise<void> {
+    const generation = ++this.previewRequest; this.previewCleanup?.(); this.previewCleanup = undefined;
+    this.preview.replaceChildren();
+    try {
+      const result = await this.controller.readPreview(path);
+      if (!this.alive || generation !== this.previewRequest) return;
+      const content = this.container.ownerDocument.createElement('div');
+      const cleanup = await this.actions.preview(result.text, content, path);
+      if (!this.alive || generation !== this.previewRequest) { cleanup?.(); return; }
+      this.previewCleanup = cleanup || undefined; this.preview.replaceChildren(content);
+      if (result.truncated) node(this.preview, 'p', t('organizer.previewLimited'), 'note-organizer-muted');
+    } catch (error) { if (generation === this.previewRequest) this.preview.textContent = errorText(error); }
   }
-  private link(row: HTMLElement, proposal: LinkProposal): void {
-    const anchor = proposal.input.anchor;
-    const start = Math.max(0, anchor.from - anchor.contextFrom - 30), end = Math.min(anchor.contextText.length, anchor.to - anchor.contextFrom + 60);
-    node(row, 'blockquote', '“' + (start ? '…' : '') + anchor.contextText.slice(start, end) + (end < anchor.contextText.length ? '…' : '') + '”');
-    const destination = node(row, 'div', undefined, 'note-organizer-path');
-    let plan: LinkPlan | null = null;
-    const controls = node(row, 'div', undefined, 'note-organizer-actions');
-    const confirm = button(controls, '添加链接', () => {
-      if (!plan) return; row.style.minHeight = row.getBoundingClientRect().height + 'px'; confirm.disabled = true; row.dataset.completed = 'true';
-      try { this.controller.confirmLink(plan); row.replaceChildren(); node(row, 'p', '已添加链接 · 可用编辑器撤销'); }
-      catch (error) { row.dataset.completed = 'false'; this.feedback(row, messageFor(error)); }
-    }, true);
-    const prepare = (id: number) => {
-      try { plan = this.controller.prepareLink(proposal, id); destination.replaceChildren(); button(destination, plan.target.path, () => this.controller.openNote(plan!.target.path)); confirm.disabled = false; }
-      catch (error) { plan = null; confirm.disabled = true; destination.textContent = messageFor(error); }
-    };
-    if (proposal.selected !== null) prepare(proposal.selected);
-    button(controls, '更换目标', () => this.actions.target(proposal, prepare));
-    const more = details(row, '更多'); button(more, '本次不再提示', () => this.controller.dismissLink(proposal));
+  private async accept(): Promise<void> {
+    const plan = this.plan; if (!plan || this.busy || Date.now() < this.acceptAfter) return;
+    this.feedback = ''; this.busy = true; this.acceptAfter = Date.now() + 400; const path = this.current; this.signature = ''; this.render();
+    try {
+      await this.controller.confirmMove(plan); this.lastMove = plan.id; this.checked.delete(plan.source.path);
+      this.busy = false; this.acceptAfter = Date.now() + 400;
+      if (this.current === path) this.next(1, true);
+    } catch (error) { this.feedback = errorText(error); this.busy = false; }
+    this.signature = ''; this.render();
   }
-  private feedback(row: HTMLElement, message: string): void { let status = row.querySelector<HTMLElement>('.note-organizer-feedback'); if (!status) { status = node(row, 'p', '', 'note-organizer-feedback'); status.setAttribute('role', 'status'); } status.textContent = message; }
-  private async run(row: HTMLElement, action: () => Promise<void>): Promise<void> { try { await action(); } catch (error) { this.feedback(row, messageFor(error)); } }
-  destroy(): void { this.alive = false; this.unsubscribe(); this.cards.clear(); }
+  private next(direction: number, pendingOnly = false): void {
+    const paths = [...this.rows.keys()]; const index = paths.indexOf(this.current ?? '');
+    for (let offset = 1; offset <= paths.length; offset++) {
+      const next = paths[(index + direction * offset + paths.length) % paths.length]!;
+      const entry = this.entries().find(entry => entry.path === next);
+      if (entry && (!pendingOnly || !['done', 'moving', 'ignored'].includes(entry.status))) { this.select(next); return; }
+    }
+  }
+  private onKey(event: KeyboardEvent): void {
+    if (event.defaultPrevented || event.repeat || event.ctrlKey || event.metaKey || event.altKey || event.isComposing || (event.target instanceof HTMLElement && event.target.matches('input,textarea,select,[contenteditable="true"]'))) return;
+    const key = event.key.toLowerCase();
+    if (!['j', 'k', 'enter', 'e', 's', 'z'].includes(key)) return;
+    if (key === 'enter' && event.target instanceof HTMLButtonElement && event.target.dataset.action !== 'accept') return;
+    event.preventDefault();
+    if (key === 'j' || key === 'k' || key === 's') this.next(key === 'k' ? -1 : 1);
+    else if (key === 'enter') void this.accept();
+    else if (key === 'e') this.controls.querySelector<HTMLButtonElement>('[data-action="choose"]')?.click();
+    else if (key === 'z' && this.lastMove) void this.run(() => this.controller.undoMove(this.lastMove!));
+  }
+  private renderHistory(): void {
+    const records = this.controller.recentMoves().slice(-20).reverse(); const signature = JSON.stringify(records);
+    if (this.recent.dataset.signature === signature || this.recent.contains(this.container.ownerDocument.activeElement)) return;
+    this.recent.dataset.signature = signature; this.recent.replaceChildren(); node(this.recent, 'summary', t('organizer.recent'));
+    for (const record of records) {
+      const row = node(this.recent, 'div', undefined, 'note-organizer-recent'); node(row, 'span', record.to);
+      if (record.status === 'done') button(row, t('organizer.undo'), () => { void this.run(() => this.controller.undoMove(record.id)); });
+      else if (record.status === 'review' || record.status === 'intent') { node(row, 'span', record.message ? translateMessage(record.message) : t('organizer.needsReview')); if (record.status === 'review') button(row, t('organizer.acknowledge'), () => { void this.run(() => this.controller.acknowledgeMove(record.id)); }); }
+      else node(row, 'span', t(record.status === 'archived' ? 'organizer.archived' : 'organizer.undone'));
+    }
+  }
+  private renderUndo(): void {
+    const record = this.controller.recentMoves().find(item => item.id === this.lastMove && item.status === 'done');
+    if (this.undoBar.dataset.record === record?.id) return;
+    this.undoBar.replaceChildren(); this.undoBar.hidden = !record; this.undoBar.dataset.record = record?.id ?? '';
+    if (record) { node(this.undoBar, 'span', t('organizer.filedAt', { path: record.to })); button(this.undoBar, t('organizer.undo'), () => { void this.run(() => this.controller.undoMove(record.id)); }); }
+  }
+  private async run(action: () => Promise<void>): Promise<void> { this.feedback = ''; try { await action(); } catch (error) { this.feedback = errorText(error); } this.render(); }
+  destroy(): void { this.alive = false; this.preparation++; this.previewRequest++; this.previewCleanup?.(); this.unsubscribe(); clearTimeout(this.guardTimer); this.container.removeEventListener('keydown', this.keydown); this.rows.clear(); }
 }
-function containerActive(container: HTMLElement): Element | null { return container.ownerDocument.activeElement; }

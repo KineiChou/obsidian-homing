@@ -63,5 +63,22 @@ export const errorZh: Readonly<Record<ErrorMessageKey, string>> = {
   "error.analysisTimeout": "等待服务响应超时；正在等待已发送请求结束。",
   "error.usageStorage": "调用已结束，但用量保存失败。",
   "error.pathInvalid": "请选择知识库内的有效路径。",
-  "error.automaticLinkBudgetExceeded": "今日自动链接额度已用完，仍可分析归档或手动添加链接。"
+  "error.automaticLinkBudgetExceeded": "今日自动链接额度已用完，仍可分析归档或手动添加链接。",
+  "host.contentChanged": "内容已改变，等待保存后重新分析。",
+  "host.noteMissing": "笔记已不存在。",
+  "host.destinationExcluded": "此目录不能作为归档位置。",
+  "host.pathOccupied": "该路径已被文件占用。",
+  "host.folderChanged": "目录设置已变化，请重新选择。",
+  "host.returned": "已移回收件箱，需要时可重新分析。",
+  "host.openEditor": "请先在编辑器中打开一篇笔记。",
+  "host.saving": "笔记仍在保存，请稍后重试。",
+  "host.outsideInbox": "笔记不在当前收件箱范围内。",
+  "host.propertiesInvalid": "笔记属性无法解析，请修正后再分析。",
+  "host.moveOccupied": "笔记已移动或目标位置已被占用。",
+  "host.folderMissing": "目标目录已不存在。",
+  "host.linksUnverified": "笔记已移动，但链接更新尚未核实，请检查移动记录。",
+  "host.referenceIndex": "无法核对 {path} 的链接，请等待索引完成。",
+  "host.referenceUnresolved": "{path} 中的链接 {link} 尚未解析，无法确认移动安全。",
+  "host.referenceOutgoing": "移动将改变 {path} 中的链接 {link}；请先启用自动更新内部链接。",
+  "host.referenceIncoming": "{path} 通过 {link} 引用此笔记；请先启用自动更新内部链接。"
 };

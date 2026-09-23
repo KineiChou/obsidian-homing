@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import type { App, Plugin as ObsidianPlugin } from 'obsidian';
 import { renderSettings } from '../src/ui/settings-tab';
 import { ObsidianOrganizer } from '../src/obsidian/controller';
 import { DEFAULT_SETTINGS } from '../src/settings';
 import { FakeApp, Plugin, requestUrl, Setting, TFolder } from './fakes/obsidian';
 
+import { setLocale } from '../src/i18n';
+beforeEach(() => setLocale('zh'));
 const disposals: (() => void)[] = [];
 afterEach(() => { for (const dispose of disposals.splice(0)) dispose(); document.body.replaceChildren(); vi.restoreAllMocks(); });
 
@@ -44,7 +46,7 @@ describe('native settings selection integration', () => {
       choose(f.container, folder);
       await new Promise<void>(resolve => setTimeout(resolve, 0));
       await f.controller.store.flush();
-      expect(f.controller.settings()).toMatchObject({ inbox: folder, secretName: 'key' });
+      await vi.waitFor(() => expect(f.controller.settings()).toMatchObject({ inbox: folder, secretName: 'key' }));
       expect(f.plugin.data).toMatchObject({ settings: { inbox: folder, secretName: 'key' } });
       expect(f.container.textContent).toContain(folder);
     }
@@ -59,12 +61,27 @@ describe('native settings selection integration', () => {
     choose(f.container, 'Reading');
     await new Promise<void>(resolve => setTimeout(resolve, 0));
     expect(f.controller.settings().inbox).toBe('Inbox');
-    expect(f.container.querySelector('[role="status"]')?.textContent).toContain('存储');
+    await vi.waitFor(() => expect(f.container.querySelector('[role="status"]')?.textContent).toContain('存储'));
     choose(f.container, 'Reading');
     await new Promise<void>(resolve => setTimeout(resolve, 0));
     await f.controller.store.flush();
-    expect(f.controller.settings().inbox).toBe('Reading');
+    await vi.waitFor(() => expect(f.controller.settings().inbox).toBe('Reading'));
     expect(f.container.querySelector('[role="status"]')?.textContent).toBe('');
     expect(fluentThen).not.toHaveBeenCalled();
   });
+});
+
+it('clears the old key and applies endpoint/model together when switching providers', async () => {
+  const f = await settingsFixture();
+  const select = f.container.querySelector('select')!; select.value = 'anthropic'; select.dispatchEvent(new Event('change'));
+  await vi.waitFor(() => expect(f.controller.settings()).toMatchObject({ provider: 'anthropic', secretName: '', endpoint: 'https://api.anthropic.com/v1', modelId: 'claude-sonnet-4-6' }));
+  expect(requestUrl).not.toHaveBeenCalled();
+});
+
+it('waits for a pending connection setting before sending the connection test', async () => {
+  const f = await settingsFixture();
+  requestUrl.mockResolvedValue({ status: 200, headers: {}, json: { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ answers: { connection: { choice: 'learning', ranking: ['learning', 'none'] } } }) } }] } });
+  const save = f.controller.saveSettings({ provider: 'openai-compatible', endpoint: 'http://localhost:19436/v1', modelId: 'test-model', secretName: '' });
+  await f.controller.testConnection(); await save;
+  expect(requestUrl).toHaveBeenCalledWith(expect.objectContaining({ url: 'http://localhost:19436/v1/chat/completions' }));
 });

@@ -1,21 +1,50 @@
 .note-organizer { color: var(--text-normal); font-size: var(--font-ui-small); line-height: var(--line-height-normal); }
-.note-organizer-head, .note-organizer-actions, .note-organizer-tabs { display: flex; align-items: center; flex-wrap: wrap; gap: var(--size-4-2); }
-.note-organizer-head { justify-content: space-between; margin-bottom: var(--size-4-4); }
-.note-organizer-actions { margin-top: var(--size-4-3); }
-.note-organizer-tabs > button { flex: 1; }
-.note-organizer-tabs > button[aria-pressed="true"] { background: var(--background-modifier-hover); box-shadow: inset 0 -2px var(--interactive-accent); }
-.note-organizer-muted { color: var(--text-muted); }
-.note-organizer-card { padding: var(--size-4-4) 0; border-bottom: 1px solid var(--background-modifier-border); }
-.note-organizer-card > button:first-child { background: transparent; box-shadow: none; padding-inline: 0; text-align: start; white-space: normal; height: auto; overflow-wrap: anywhere; }
-.note-organizer-path, .note-organizer-path button, .note-organizer-recent span { white-space: normal; overflow-wrap: anywhere; text-align: start; height: auto; }
-.note-organizer blockquote { margin: 0 0 var(--size-4-3); padding: var(--size-4-2) var(--size-4-3); border-inline-start: 2px solid var(--background-modifier-border); color: var(--text-muted); max-height: 12em; overflow: auto; }
-.note-organizer details { margin-block: var(--size-4-3); }
-.note-organizer summary { color: var(--text-muted); }
+.note-organizer [hidden], .note-organizer-status[hidden] { display: none !important; }
+.note-organizer-head, .note-organizer-actions, .note-organizer-detail-head, .note-organizer-selection, .note-organizer-undo { display: flex; align-items: center; flex-wrap: wrap; gap: var(--size-4-2); }
+.note-organizer-head, .note-organizer-detail-head { justify-content: space-between; }
+.note-organizer-head h2, .note-organizer-detail-head h3 { margin: 0; }
+.note-organizer-actions { margin-block: var(--size-4-3); }
+.note-organizer-muted, .note-organizer-row-path { color: var(--text-muted); }
+.note-organizer-review { display: flex; flex-direction: column; height: 100%; gap: var(--size-4-2); container-type: inline-size; }
+.note-organizer-review > p { margin: 0; }
+.note-organizer-layout { display: grid; grid-template-columns: minmax(180px, 30%) minmax(0, 1fr); flex: 1; min-height: 200px; overflow: hidden; border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); }
+.note-organizer-queue { overflow: auto; padding: var(--size-4-3); border-inline-end: 1px solid var(--background-modifier-border); }
+.note-organizer-selection { color: var(--text-muted); margin-bottom: var(--size-4-3); }
+.note-organizer-selection button { font-size: var(--font-ui-smaller); }
+.note-organizer-list h3 { color: var(--text-muted); font-size: var(--font-ui-smaller); margin: var(--size-4-3) 0 var(--size-4-2); }
+.note-organizer-row { display: flex; align-items: center; gap: var(--size-4-1); margin-block: var(--size-4-1); }
+.note-organizer-row > button { display: block; flex: 1; min-width: 0; height: auto; padding: var(--size-4-2); text-align: start; white-space: normal; overflow-wrap: anywhere; box-shadow: none; background: transparent; }
+.note-organizer-row > button[aria-current="true"] { background: var(--background-modifier-hover); box-shadow: inset 2px 0 var(--interactive-accent); }
+.note-organizer-row-path { display: block; font-size: var(--font-ui-smaller); margin-top: 3px; }
+.note-organizer-detail { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.note-organizer-detail-head { padding: var(--size-4-4); }
+.note-organizer-detail > .note-organizer-muted { padding-inline: var(--size-4-4); margin: 0; }
+.note-organizer-preview { flex: 1; overflow: auto; padding: var(--size-4-4); user-select: text; }
+.note-organizer-preview > div { max-width: 760px; margin-inline: auto; }
+.note-organizer-action-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--size-4-2); padding: var(--size-4-3); border-top: 1px solid var(--background-modifier-border); background: var(--background-secondary); }
+.note-organizer-action-bar button { height: auto; min-height: var(--input-height); white-space: normal; overflow-wrap: anywhere; }
+.note-organizer-alternatives { width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: var(--size-4-2); color: var(--text-muted); }
+.note-organizer-alternatives button { font-size: var(--font-ui-smaller); }
+.note-organizer-path, .note-organizer-recent { white-space: normal; overflow-wrap: anywhere; }
+.note-organizer details { margin-block: var(--size-4-2); }
+.note-organizer summary { color: var(--text-muted); cursor: pointer; }
 .note-organizer-feedback { color: var(--text-normal); overflow-wrap: anywhere; }
-.note-organizer-footer { padding-block: var(--size-4-4); }
-.note-organizer-recent { padding-block: var(--size-4-2); }
+.note-organizer-recent { display: flex; flex-wrap: wrap; align-items: center; gap: var(--size-4-2); padding-block: var(--size-4-2); }
+.note-organizer-review > details { max-height: 25%; overflow: auto; }
+.note-organizer-undo { padding: var(--size-4-2) var(--size-4-3); border-inline-start: 2px solid var(--interactive-accent); }
 .note-organizer-settings .setting-item { flex-wrap: wrap; }
 .note-organizer-settings .setting-item-info { min-width: 150px; }
 .note-organizer-settings textarea { width: 100%; }
-.note-organizer-status { padding: 0; height: auto; box-shadow: none; background: transparent; color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.note-organizer-batch-list { max-height: 55vh; overflow: auto; }
+.note-organizer-check-row { display: flex; align-items: baseline; gap: var(--size-4-2); padding-block: var(--size-4-2); overflow-wrap: anywhere; }
+.note-organizer-check-row input { flex-shrink: 0; }
+.note-organizer-link-row { border-bottom: 1px solid var(--background-modifier-border); padding-block: var(--size-4-2); }
+.note-organizer-link-row p:empty { display: none; }
+.note-organizer-banner { display: flex; align-items: center; flex-wrap: wrap; gap: var(--size-4-2); padding: var(--size-4-2) var(--size-4-3); background: var(--background-secondary); border-bottom: 1px solid var(--background-modifier-border); }
+.note-organizer-banner > span:first-child { flex: 1; overflow-wrap: anywhere; }
+.note-organizer-statusbar { gap: var(--size-4-2); }
+.note-organizer-status { display: inline-flex; gap: 4px; align-items: center; padding: 0; height: auto; box-shadow: none; background: transparent; color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.note-organizer-status svg { width: 14px; height: 14px; }
 .note-organizer button:disabled { cursor: default; }
+@container (max-width: 600px) { .note-organizer-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(100px, 30%) minmax(0, 1fr); } .note-organizer-queue { border-inline-end: 0; border-bottom: 1px solid var(--background-modifier-border); } }
+@media (prefers-reduced-motion: reduce) { .note-organizer * { scroll-behavior: auto; } }

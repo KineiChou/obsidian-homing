@@ -82,6 +82,10 @@ describe('review host fixes', () => {
     f.close(); requestUrl.mockClear();
     const restored = new ObsidianOrganizer(f.plugin as unknown as ObsidianPlugin); await restored.initialize(); disposals.push(() => restored.dispose());
     expect(restored.state().filing[0]?.status).toBe('ready'); await vi.advanceTimersByTimeAsync(20000); expect(requestUrl).not.toHaveBeenCalled();
+    await restored.store.flush(); expect((f.plugin.data as { filingQueue: { proposal?: unknown }[] }).filingQueue[0]?.proposal).toBeDefined();
+    restored.dispose(); f.plugin.unload();
+    const again = new ObsidianOrganizer(f.plugin as unknown as ObsidianPlugin); await again.initialize(); disposals.push(() => again.dispose());
+    expect(again.state().filing[0]?.status).toBe('ready'); await vi.advanceTimersByTimeAsync(20000); expect(requestUrl).not.toHaveBeenCalled();
   });
   it('rejects restored suggestions after source content changes', async () => {
     vi.useFakeTimers(); const f = await fixture(); mockClassification(); f.controller.analyzeNote(f.file.path);

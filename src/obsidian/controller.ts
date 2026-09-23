@@ -65,7 +65,7 @@ export class ObsidianOrganizer implements OrganizerController {
           return anchor ? [{ ...link, input: { ...link.input, anchor } }] : [];
         });
         this.excerpts.delete(path);
-        if (this.queue?.entries().some(entry => entry.path === path && (entry.proposal !== undefined || entry.status === 'analyzing') && !['ignored', 'done', 'moving', 'review'].includes(entry.status))) this.queue.mark(path, 'waiting', '内容已改变，等待保存后重新分析。');
+        if (this.queue?.entries().some(entry => entry.path === path && (entry.proposal !== undefined || entry.status === 'analyzing') && !['ignored', 'done', 'moving', 'review'].includes(entry.status))) this.queue.mark(path, 'waiting', 'host.contentChanged');
         this.message = null; this.events.emit();
       },
       idle: session => { if (this.enabled() && this.settings().autoLinks) void this.analyzeLinks(session, true); },
@@ -77,10 +77,11 @@ export class ObsidianOrganizer implements OrganizerController {
     this.filingFingerprint = await contentHash(filingSettingsKey(this.configuration));
     const client = createDecisionClient({ post: async (url, headers, body) => {
       try { const response = await requestUrl({ url, method: 'POST', headers: { ...headers }, body, throw: false }); let json: unknown = null; try { json = response.json; } catch { /* HTTP status remains authoritative for non-JSON failures. */ } return { status: response.status, headers: response.headers, json }; }
-      catch { throw new OrganizerError('network', '暂时无法连接 Jev，请稍后重试。'); }
+      catch { throw new OrganizerError('network', 'error.network'); }
     } }, { get: () => this.plugin.app.secretStorage.getSecret(this.settings().secretName) }, () => this.settings());
     this.scheduler = new SharedDecisionScheduler(client, this.store.usage, () => this.settings().dailyRequestLimit);
     const classifier = new MixedDepthClassifier(this.scheduler, () => ({ longNoteStrategy: this.settings().longNoteStrategy, ...(this.settings().folderProfilesEnabled ? { profiles: this.profiles } : {}) }));
+    this.refreshFolders();
     this.queue = new StableInboxQueue({
       eligible: path => this.vault.eligible(path), automaticEnabled: () => this.enabled() && this.settings().autoFiling,
       encodeProposal: proposal => this.encodeProposal(proposal), restoreProposal: (path, proposal) => this.restoreProposal(path, proposal),
@@ -99,7 +100,7 @@ export class ObsidianOrganizer implements OrganizerController {
     this.linker = new ConfirmedLinkService(this.index, {
       editor: id => this.editors.get(id)?.forConfirmation(), settingsRevision: () => this.linkRevision,
       allowed: target => this.vault.allowed(target.path),
-      generateLink: (target, source, alias) => { const file = this.vault.file(target.path); if (!file) throw new OrganizerError('missing', '链接目标已不存在。'); return app.fileManager.generateMarkdownLink(file, source, undefined, alias); },
+      generateLink: (target, source, alias) => { const file = this.vault.file(target.path); if (!file) throw new OrganizerError('missing', 'error.linkTargetChanged'); return app.fileManager.generateMarkdownLink(file, source, undefined, alias); },
       resolvesTo: (link, source, target) => {
         const match = /^\[\[([^\]|]+)(?:\|[^\]]*)?\]\]$/.exec(link) ?? /^\[[^\]]*\]\(([^)]+)\)$/.exec(link.trim());
         if (!match?.[1]) return false;
@@ -107,7 +108,6 @@ export class ObsidianOrganizer implements OrganizerController {
         return app.metadataCache.getFirstLinkpathDest(parseLinktext(path).path, source)?.path === target.path;
       },
     });
-    this.refreshFolders();
     await this.queue.restore(this.store.snapshot().filingQueue);
     await this.queue.restore(this.plugin.app.vault.getMarkdownFiles().filter(file => this.vault.eligible(file.path)).map(file => ({ path: file.path, status: 'pending' as const })));
     this.filing = this.queue.entries();
@@ -230,11 +230,11 @@ export class ObsidianOrganizer implements OrganizerController {
   previewAnalysis(paths?: readonly string[]) {
     const entries = new Map(this.queue.entries().map(entry => [entry.path, entry]));
     const selected = paths ? new Set(paths) : null;
-    const notes = this.plugin.app.vault.getMarkdownFiles().filter(file => this.vault.eligible(file.path) && (!selected || selected.has(file.path)) && !['ignored', 'ready', 'analyzing', 'moving'].includes(entries.get(file.path)?.status ?? '')).sort((a, b) => b.stat.mtime - a.stat.mtime || a.path.localeCompare(b.path)).map(file => ({ path: file.path, modifiedAt: file.stat.mtime }));
+    const notes = this.plugin.app.vault.getMarkdownFiles().filter(file => this.vault.eligible(file.path) && (!selected || selected.has(file.path)) && !['ignored', 'analyzing', 'moving', ...(!selected ? ['ready'] : [])].includes(entries.get(file.path)?.status ?? '')).sort((a, b) => b.stat.mtime - a.stat.mtime || a.path.localeCompare(b.path)).map(file => ({ path: file.path, modifiedAt: file.stat.mtime }));
     const targets = this.settings().folderProfilesEnabled ? this.profiles.enrich(this.catalog.snapshot().targets) : this.catalog.snapshot().targets;
     const estimates = notes.map(note => estimateFilingRequests(targets, this.settings().longNoteStrategy === 'excerpt' ? Math.min(12000, this.vault.file(note.path)?.stat.size ?? 12000) : this.vault.file(note.path)?.stat.size ?? 30000));
     const min = estimates.length ? Math.min(...estimates.map(item => item.min)) : 0;
-    const max = estimates.length ? Math.max(...estimates.map(item => item.max)) : 0;
+    const max = estimates.length ? Math.max(...estimates.map(item => item.max)) + (this.settings().folderProfilesEnabled && targets.length > 254 ? 1 : 0) : 0;
     const remainingRequests = Math.max(0, this.settings().dailyRequestLimit - this.usage().requests);
     return { notes, remainingRequests, requestsPerNote: { min, max }, recommendedCount: Math.min(notes.length, max ? Math.max(remainingRequests >= min ? 1 : 0, Math.floor(remainingRequests / max)) : 0) };
   }
@@ -242,7 +242,7 @@ export class ObsidianOrganizer implements OrganizerController {
   async readPreview(path: string): Promise<{ text: string; truncated: boolean }> {
     safePath(path);
     const file = this.vault.file(path);
-    if (!file || (!this.vault.eligible(path) && !this.store.journal.records().some(record => record.to === path))) throw new OrganizerError('missing', '笔记已不存在。');
+    if (!file || (!this.vault.eligible(path) && !this.store.journal.records().some(record => record.to === path))) throw new OrganizerError('missing', 'host.noteMissing');
     const vault = this.plugin.app.vault;
     const text = await (typeof vault.cachedRead === 'function' ? vault.cachedRead(file) : vault.read(file));
     let end = Math.min(text.length, 20000);
@@ -252,13 +252,13 @@ export class ObsidianOrganizer implements OrganizerController {
   async createDestination(path: string) {
     const validated = safePath(path), probe = new MemoryFolderCatalog();
     probe.refresh([validated], this.settings());
-    if (!probe.snapshot().targets.length) throw new OrganizerError('invalid-settings', '此目录不能作为归档位置。');
+    if (!probe.snapshot().targets.length) throw new OrganizerError('invalid-settings', 'host.destinationExcluded');
     const existing = this.plugin.app.vault.getAbstractFileByPath(validated);
-    if (existing && !(existing instanceof TFolder)) throw new OrganizerError('conflict', '该路径已被文件占用。');
+    if (existing && !(existing instanceof TFolder)) throw new OrganizerError('conflict', 'host.pathOccupied');
     if (!existing) await this.plugin.app.vault.createFolder(validated);
     this.refreshFolders();
     const target = this.catalog.snapshot().targets.find(target => target.path === validated);
-    if (!target) throw new OrganizerError('stale', '目录设置已变化，请重新选择。');
+    if (!target) throw new OrganizerError('stale', 'host.folderChanged');
     return target;
   }
   analyzeNote(path: string): void { this.excerpts.delete(path); this.queue.analyze(path); }
@@ -267,19 +267,19 @@ export class ObsidianOrganizer implements OrganizerController {
   async prepareMove(path: string, target: string): Promise<MovePlan> {
     const entry = this.filing.find(item => item.path === path), proposal = entry?.proposal;
     const plan = await this.moves.prepare(path, target);
-    if (proposal && (proposal.source.contentHash !== plan.source.contentHash || proposal.source.revision !== plan.source.revision || proposal.foldersRevision !== plan.foldersRevision || proposal.context.settingsRevision !== this.filingRevision)) throw new OrganizerError('stale', '建议已过期，请重新分析。');
+    if (proposal && (proposal.source.contentHash !== plan.source.contentHash || proposal.source.revision !== plan.source.revision || proposal.foldersRevision !== plan.foldersRevision || proposal.context.settingsRevision !== this.filingRevision)) throw new OrganizerError('stale', 'error.analysisStale');
     return plan;
   }
   async confirmMove(plan: MovePlan): Promise<void> {
     this.queue.mark(plan.source.path, 'moving');
     const result = await this.moves.confirm(plan.id);
-    if (result.status === 'done') this.queue.mark(plan.source.path, 'done', '已归档', result.record.id);
+    if (result.status === 'done') this.queue.mark(plan.source.path, 'done', 'organizer.done', result.record.id);
     else { this.queue.mark(plan.source.path, result.status === 'review' ? 'review' : 'failed', result.message); throw new OrganizerError('stale', result.message); }
   }
   async undoMove(id: string): Promise<void> {
     const result = await this.moves.undo(id);
     if (result.status !== 'done') throw new OrganizerError('stale', result.message);
-    this.queue.mark(result.record.from, 'waiting', '已移回收件箱，需要时可重新分析。'); this.events.emit();
+    this.queue.mark(result.record.from, 'waiting', 'host.returned'); this.events.emit();
   }
   async acknowledgeMove(id: string): Promise<void> {
     const record = this.store.journal.records().find(item => item.id === id);
@@ -293,7 +293,7 @@ export class ObsidianOrganizer implements OrganizerController {
   recentMoves() { return this.store.journal.records(); }
   async findLinks(): Promise<void> {
     const session = this.editors.active(this.activePath);
-    if (!session) throw new OrganizerError('missing', '请先在编辑器中打开一篇笔记。');
+    if (!session) throw new OrganizerError('missing', 'host.openEditor');
     session.clearSuppressions(); await this.analyzeLinks(session.id, false);
   }
   private async analyzeLinks(id: string, automatic: boolean): Promise<void> {
@@ -302,13 +302,13 @@ export class ObsidianOrganizer implements OrganizerController {
     const settingsRevision = this.linkRevision, epoch = this.index.epoch, requestRevision = this.requestRevision;
     const matcher = new LocalMentionMatcher(this.index);
     const inputs = matcher.inputs(snapshot, target => this.vault.allowed(target.path)).filter(input => !session.suppressed(input.anchor));
-    if (!inputs.length) { session.acknowledgeAnalysis(snapshot); if (!automatic) { this.message = '暂未找到合适的链接。'; this.events.emit(); } return; }
+    if (!inputs.length) { session.acknowledgeAnalysis(snapshot); if (!automatic) { this.message = 'links.empty'; this.events.emit(); } return; }
     const isCurrent = () => !this.disposed && this.requestRevision === requestRevision && (!automatic || (this.enabled() && this.settings().autoLinks)) && this.linkRevision === settingsRevision && this.index.epoch === epoch && session.currentRevision === snapshot.revision && session.path === snapshot.path && this.vault.linkSource(snapshot.path) && inputs.every(input => input.candidates.every(target => this.index.get(target.noteId)?.revision === target.revision));
     try {
       const proposals = await this.recommender.propose(inputs, this.context('link'), { key: 'link:' + id, priority: automatic ? 'link' : 'manual', automatic, isCurrent });
       if (!isCurrent()) return;
       session.acknowledgeAnalysis(snapshot);
-      this.links = [...this.links.filter(existing => !inputs.some(input => input.anchor.editorSessionId === existing.input.anchor.editorSessionId && input.anchor.from === existing.input.anchor.from && input.anchor.to === existing.input.anchor.to)), ...proposals.filter(proposal => proposal.selected !== null)]; this.message = automatic ? null : this.links.length ? null : '暂未找到合适的链接。'; this.events.emit();
+      this.links = [...this.links.filter(existing => !inputs.some(input => input.anchor.editorSessionId === existing.input.anchor.editorSessionId && input.anchor.from === existing.input.anchor.from && input.anchor.to === existing.input.anchor.to)), ...proposals.filter(proposal => proposal.selected !== null)]; this.message = automatic ? null : this.links.length ? null : 'links.empty'; this.events.emit();
     } catch (error) { if (!automatic) { this.report(error); throw error; } }
   }
   prepareLink(proposal: LinkProposal, target: number): LinkPlan { return this.linker.prepare(proposal, target); }
@@ -321,7 +321,7 @@ export class ObsidianOrganizer implements OrganizerController {
   dismissLink(proposal: LinkProposal): void { this.editors.get(proposal.input.anchor.editorSessionId)?.suppress(proposal.input.anchor, proposal.selected); this.links = this.links.filter(item => item.id !== proposal.id); this.events.emit(); }
   openNote(path: string): void { void this.plugin.app.workspace.openLinkText(path, this.activePath ?? '', false); }
   target(id: number) { return this.index.get(id); }
-  async testConnection(): Promise<void> { const requestRevision = this.requestRevision; this.scheduler.setPaused(false); await this.scheduler.evaluate({ modelId: this.settings().modelId, state: 'A short example about learning.', questions: [{ id: 'connection', instructions: 'Choose the matching subject.', options: [{ id: 'learning', description: 'Learning and reading' }, { id: 'none', description: 'Other' }] }] }, { key: 'connection', priority: 'manual', automatic: false, isCurrent: () => !this.disposed && this.requestRevision === requestRevision }); }
+  async testConnection(): Promise<void> { await this.settingsWrite; const requestRevision = this.requestRevision; this.scheduler.setPaused(false); await this.scheduler.evaluate({ modelId: this.settings().modelId, state: 'A short example about learning.', questions: [{ id: 'connection', instructions: 'Choose the matching subject.', options: [{ id: 'learning', description: 'Learning and reading' }, { id: 'none', description: 'Other' }] }] }, { key: 'connection', priority: 'manual', automatic: false, isCurrent: () => !this.disposed && this.requestRevision === requestRevision }); }
   private report(error: unknown): void { this.message = messageFor(error); this.events.emit(); }
   dispose(): void { this.disposed = true; this.generation++; this.scheduler?.dispose(); this.queue?.dispose(); this.editors.dispose(); this.index.clear(); this.profiles.clear(); this.profilePaths.clear(); this.excerpts.clear(); this.events.clear(); void this.store.flush().catch(() => undefined); }
 }
