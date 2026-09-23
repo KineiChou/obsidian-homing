@@ -42,15 +42,23 @@
 
 ## 验证
 
-Node 22.12+；使用 npm 11 验证 `npx --yes npm@11 ci --ignore-scripts`，再执行 `npm run check`。单元测试验证范围、匹配、候选校验和状态转换；集成测试使用内存 vault、延迟 HTTP 和编辑器替身验证完整确认、撤销、竞争与失败流程。真实 Obsidian 的链接更新、CM6 节点与撤销行为另用专用测试 vault 核对，不能把替身测试描述为真实宿主验证。
+Node 22.12+；使用 npm 11 验证 `npx --yes npm@11 ci --ignore-scripts`，再执行 `npm run check`。单元测试验证范围、匹配、候选校验和状态转换；集成测试使用内存 vault、延迟 HTTP 和编辑器替身验证完整确认、撤销、竞争与失败流程。真实宿主使用独立合成测试 vault 核对，不能把替身测试描述为真实宿主验证；已完成的场景与剩余边界见下文及验证记录。
 
 构建输出为根目录 `main.js`、`manifest.json`、`styles.css`。不提交凭据、用户笔记或 node_modules。
+
+## UI 入口与端口
+
+0.2.0 开发预览在主区域复用 `note-organizer-inbox` ItemView；旧侧栏 view 会迁移。`ReviewPanel` 负责分组清单、单篇 Markdown 预览与操作栏，`AnalysisModal` 在发送前确认待分析路径，`LinkSuggestionsModal` 固定源会话并批量确认链接，`filingBanner` 用 CM6 顶部 panel 展示当前笔记归档与撤销。状态栏展示归档图标／数量及当前笔记链接入口；设置使用原生 `setHeading`，更多操作使用原生 `Menu`。
+
+整理视图成功归档后自动前进，并用撤销条和短暂防连击保护避免连续误操作；分值接近时可显示两个改选目录，不展示模型概率。预览与计划准备均有异步代次检查，销毁时释放 MarkdownRenderer 子组件和订阅。归档界面与提示条可以并存，任何入口都不能凭模型响应直接写入；实际交互以 [交互文档](interaction-design.md) 为准。
+
+`EditorSession.snapshot()` 只读取，不清除脏区间。协调器仅在当前快照成功返回建议或确认没有候选时调用 `acknowledgeAnalysis(snapshot)`；调用校验会话与文档版本，只清除已分析窗口。失败、过期响应、预算拒绝和超时保留待分析范围，确认预览读取不得消费自动分析任务。
 
 ## 宿主验证边界
 
 `MoveHost.referencesSafe` 返回 true、false 或具体拒绝原因。只有运行时类型保护后的 `vault.getConfig('alwaysUpdateLinks') === true` 才允许依赖宿主改写路径引用；配置未知时使用保守检查。移动后按先前记录的链接类别和序号复核入链与出链解析，最多等待约 1 秒；失败保留文件现状并进入 review，不自动反向写回。
 
-该配置 getter、缓存收敛、真实链接重写、Obsidian 私有语法和实际撤销历史尚未完成真实宿主验收。测试替身只验证端口行为；并发外部编辑可能触发保守核对。交互约束以 [交互文档](interaction-design.md) 为准，不由工程端口扩大自动写入权限。
+Obsidian 1.13.7 合成库已验证目录选择不冻结、带入出链移动及两条链接更新／撤销、顶部提示条移动／撤销，以及本地模拟 HTTP 后两条补链的单次原生 Undo。该证据仅覆盖这些场景：最低支持版本 1.11.4、全部私有语法、同步／外部并发编辑、本地真实模型和不同服务的推荐质量未据此验证。详细宿主证据由 [验证记录](validation.md) 维护，工程端口不扩大自动写入权限。
 
 ## 开发命令和交付
 
