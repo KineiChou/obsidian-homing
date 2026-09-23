@@ -1,8 +1,21 @@
 import { OrganizerError } from './core/errors';
 import { safePath } from './core/paths';
 
+export type DecisionProvider = 'jev' | 'openai-compatible' | 'anthropic';
+export const PROVIDER_DEFAULTS = {
+  jev: { endpoint: 'https://api.typesafe.ai/v1', modelId: 'jev-1.13.0', name: 'TypeSafe Jev' },
+  'openai-compatible': { endpoint: 'https://api.openai.com/v1', modelId: 'gpt-4.1-mini', name: 'OpenAI compatible' },
+  anthropic: { endpoint: 'https://api.anthropic.com/v1', modelId: 'claude-sonnet-4-6', name: 'Anthropic' },
+} as const;
+export function validateEndpoint(endpoint: string): string {
+  try { const url = new URL(endpoint); if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) return fail(); return url.toString().replace(/\/$/, ''); } catch { return fail(); }
+}
 export interface FolderRule { readonly path: string; readonly purpose: string; readonly acceptsNotes: boolean; readonly subtreeRules: readonly string[] }
 export interface OrganizerSettings {
+  readonly provider: DecisionProvider;
+  readonly endpoint: string;
+  readonly longNoteStrategy: 'excerpt' | 'full';
+  readonly folderProfilesEnabled: boolean;
   readonly inbox: string;
   readonly includeSubfolders: boolean;
   readonly secretName: string;
@@ -16,6 +29,7 @@ export interface OrganizerSettings {
   readonly modelId: string;
 }
 export const DEFAULT_SETTINGS: OrganizerSettings = {
+  provider: 'jev', endpoint: PROVIDER_DEFAULTS.jev.endpoint, longNoteStrategy: 'excerpt', folderProfilesEnabled: false,
   inbox: '', includeSubfolders: true, secretName: '', autoFiling: true, autoLinks: false,
   linkScope: 'vault', excludedPaths: [], excludedDestinations: [], folderRules: [],
   dailyRequestLimit: 100, modelId: 'jev-1.13.0',
@@ -43,9 +57,16 @@ export function parseSettings(value: unknown): OrganizerSettings {
   });
   const linkScope = v.linkScope ?? 'vault';
   if (linkScope !== 'vault' && linkScope !== 'inbox') return fail();
-  const modelId = string('modelId', DEFAULT_SETTINGS.modelId);
-  if (modelId !== DEFAULT_SETTINGS.modelId) return fail();
+  const provider = v.provider ?? 'jev';
+  if (provider !== 'jev' && provider !== 'openai-compatible' && provider !== 'anthropic') return fail();
+  const modelId = string('modelId', PROVIDER_DEFAULTS[provider].modelId);
+  if (!modelId.trim() || modelId.length > 200 || (provider === 'jev' && modelId !== DEFAULT_SETTINGS.modelId)) return fail();
+  const endpoint = validateEndpoint(string('endpoint', PROVIDER_DEFAULTS[provider].endpoint));
+  if (provider === 'jev' && endpoint !== PROVIDER_DEFAULTS.jev.endpoint) return fail();
+  const longNoteStrategy = v.longNoteStrategy ?? 'excerpt';
+  if (longNoteStrategy !== 'excerpt' && longNoteStrategy !== 'full') return fail();
   return {
+    provider, endpoint, longNoteStrategy, folderProfilesEnabled: boolean('folderProfilesEnabled', false),
     inbox: safePath(string('inbox', ''), true), secretName: string('secretName', ''),
     includeSubfolders: boolean('includeSubfolders', true), autoFiling: boolean('autoFiling', true), autoLinks: boolean('autoLinks', false),
     linkScope, excludedPaths: paths('excludedPaths'), excludedDestinations: paths('excludedDestinations'), folderRules,
