@@ -13,7 +13,7 @@ vi.mock('../src/ui/settings-tab', () => ({ OrganizerSettingsTab: class {} }));
 vi.mock('../src/ui/link-modal', () => ({ LinkSuggestionsModal: class {} }));
 vi.mock('../src/ui/analysis-modal', () => ({ AnalysisModal: class {} }));
 vi.mock('../src/ui/inbox-modal', () => ({ InboxModal: class {} }));
-vi.mock('../src/ui/filing-pill', () => ({ filingPills: vi.fn(() => ({ extension: [], open: () => false })) }));
+vi.mock('../src/ui/filing-pill', () => ({ filingPills: vi.fn(() => ({ attach: () => () => undefined, refresh: () => undefined, open: () => false })) }));
 vi.mock('../src/ui/link-hints', () => ({ linkHints: vi.fn(() => ({ extension: [], acceptAtCursor: () => false })) }));
 vi.mock('../src/ui/target-picker', () => ({ DestinationPicker: class {}, TargetPicker: class {} }));
 vi.mock('../src/obsidian/explorer-integration', () => ({ registerExplorerIntegration: vi.fn() }));
@@ -37,10 +37,10 @@ it('does not register a plugin whose asynchronous initialization finishes after 
 it('closes organizer tabs restored from earlier versions once the layout is ready', async () => {
   host.initialize.mockResolvedValue(undefined);
   const retired = [{ detach: vi.fn() }, { detach: vi.fn() }];
-  const workspace = { getLeavesOfType: vi.fn((type: string) => type === 'note-organizer-inbox' ? [retired[0]] : type === 'note-organizer-review' ? [retired[1]] : []), onLayoutReady: (ready: () => void) => ready() };
+  const workspace = { getLeavesOfType: vi.fn((type: string) => type === 'note-organizer-inbox' ? [retired[0]] : type === 'note-organizer-review' ? [retired[1]] : []), onLayoutReady: (ready: () => void) => ready(), on: () => ({}) };
   const plugin = new NoteOrganizerPlugin({ workspace } as unknown as App, {} as PluginManifest);
   Object.assign(plugin, {
-    registerView: host.registerView, addSettingTab: vi.fn(), registerEditorExtension: vi.fn(), register: vi.fn(), registerDomEvent: vi.fn(), addCommand: vi.fn(),
+    registerView: host.registerView, addSettingTab: vi.fn(), registerEvent: vi.fn(), registerEditorExtension: vi.fn(), register: vi.fn(), registerDomEvent: vi.fn(), addCommand: vi.fn(),
     addStatusBarItem: () => { const element = document.createElement('div'); return Object.assign(element, { createEl: (tag: string) => Object.assign(element.appendChild(document.createElement(tag)), { createSpan: () => element.appendChild(document.createElement('span')) }) }); },
   });
   await plugin.onload();

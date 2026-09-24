@@ -39,7 +39,7 @@ What an analysis request can contain:
 - **Link suggestions:** the mention, its local sentence, the source note path, and candidate notes' paths, titles, aliases, tags and description/summary metadata. This can include unsaved editor text. The link index does not send every note's full body or create embeddings.
 - **Connection tests:** a fixed synthetic example, without vault text.
 
-The plugin does not collect telemetry. Credentials are read through Obsidian's secret storage; settings retain the secret name rather than the key. Notes and complete requests are not written to diagnostic logs. Minimal filing suggestions, settings and move history are stored locally in plugin data; normal vault synchronization may synchronize that data. Saved suggestions contain paths, content fingerprints and classification metadata, not note bodies. Valid suggestions restore without contacting the provider; existing inbox notes remain waiting until selected for analysis.
+The plugin does not collect telemetry. Credentials are read through Obsidian's secret storage; settings retain the secret name rather than the key. Notes and complete requests are not written to diagnostic logs. Minimal filing suggestions, settings and move history are stored locally in plugin data; normal vault synchronization may synchronize that data. Saved suggestions contain paths, content fingerprints and classification metadata, not note bodies. Valid suggestions restore without contacting the provider; existing inbox notes remain waiting until you select them for analysis or open one that has no suggestion yet (the **Analyze an inbox note when you open it** option, on by default with automatic filing).
 
 ## Current limits
 

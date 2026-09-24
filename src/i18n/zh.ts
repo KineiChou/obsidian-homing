@@ -91,7 +91,7 @@ export const zh = {
   "settings.autoFilingHelp": "为新增或修改的收件箱笔记准备建议，确认后才会移动。",
   "settings.autoLinks": "写作时准备链接建议",
   "settings.autoLinksHelp": "发送编辑位置附近的文字和候选链接，可能包含未保存内容。最多使用每日请求额度的 30%。",
-  "settings.scope": "范围与用量",
+  "settings.scope": "范围",
   "settings.subfolders": "包含收件箱子目录",
   "settings.linkScope": "链接分析范围",
   "settings.vault": "当前知识库",
@@ -164,5 +164,18 @@ export const zh = {
   "settings.explorerMarkers": "在文件栏标记建议",
   "settings.explorerMarkersHelp": "在 Obsidian 自带文件栏中，为有建议的收件箱笔记显示圆点，并在收件箱文件夹显示数量。其他文件浏览插件只提供右键菜单。",
   "settings.historyEmpty": "暂无移动记录。",
-  "explorer.count": "{count} 条归档建议"
+  "explorer.count": "{count} 条归档建议",
+  "settings.analyzeOnOpen": "打开收件箱笔记时分析",
+  "settings.analyzeOnOpenHelp": "打开一篇还没有建议的收件箱笔记时，发送这篇笔记分析一次。需要开启自动准备归档建议。",
+  "settings.usageHeading": "用量与发送内容",
+  "settings.add": "添加…",
+  "settings.remove": "移除",
+  "settings.edit": "编辑",
+  "settings.connectedStatus": "已启用 · 今日已用 {requests}/{limit} 次请求",
+  "settings.purposeContainer": "只用于组织子目录",
+  "settings.purposeNone": "无说明",
+  "settings.historyHelp": "最近 {count} 次移动 · {review} 条待核对",
+  "settings.historyOpen": "查看",
+  "history.review": "待核对",
+  "history.recent": "最近"
 } satisfies Record<MessageKey, string>;

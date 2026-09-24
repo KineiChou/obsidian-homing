@@ -1,5 +1,4 @@
-import { MarkdownView, Menu, Notice, Plugin, editorInfoField, getLanguage, setIcon } from 'obsidian';
-import type { EditorView } from '@codemirror/view';
+import { MarkdownView, Menu, Notice, Plugin, getLanguage, setIcon } from 'obsidian';
 import { ObsidianOrganizer } from './obsidian/controller';
 import { registerExplorerIntegration } from './obsidian/explorer-integration';
 import { RetiredReviewView, REVIEW_VIEW, LEGACY_REVIEW_VIEW } from './ui/review-view';
@@ -7,7 +6,7 @@ import { OrganizerSettingsTab } from './ui/settings-tab';
 import { LinkSuggestionsModal } from './ui/link-modal';
 import { AnalysisModal } from './ui/analysis-modal';
 import { InboxModal } from './ui/inbox-modal';
-import { filingPills } from './ui/filing-pill';
+import { filingPills, type FilingPills } from './ui/filing-pill';
 import { linkHints } from './ui/link-hints';
 import { DestinationPicker, TargetPicker } from './ui/target-picker';
 import { errorText, setLocale, t } from './i18n';
@@ -33,7 +32,6 @@ export default class NoteOrganizerPlugin extends Plugin {
     const organize = (preselect?: readonly string[]) => new InboxModal(this.app, organizer, { chooseDestination, openNote: path => organizer.openNote(path), analyze }, preselect).open();
     const pills = filingPills(organizer, {
       chooseDestination,
-      openNote: (view, path) => this.openBeside(view, path),
       menu: (anchor, items) => {
         const menu = new Menu(); for (const item of items) menu.addItem(value => value.setTitle(item.title).onClick(item.run));
         const rect = anchor.getBoundingClientRect(); menu.showAtPosition({ x: rect.left, y: rect.bottom }, anchor.ownerDocument);
@@ -43,7 +41,8 @@ export default class NoteOrganizerPlugin extends Plugin {
       sessionId: view => organizer.editors.sessionFor(view)?.id,
       chooseTarget: (proposal, choose) => new TargetPicker(this.app, proposal.input.candidates, target => target.path, target => choose(target.noteId)).open(),
     });
-    this.registerEditorExtension([pills.extension, hints.extension]);
+    this.registerEditorExtension(hints.extension);
+    this.attachPills(pills);
     registerExplorerIntegration(this, organizer, { eligible: path => organizer.vault.eligible(path), organize, analyze, chooseDestination });
 
     const status = this.addStatusBarItem(); status.classList.add('note-organizer-statusbar');
@@ -73,11 +72,28 @@ export default class NoteOrganizerPlugin extends Plugin {
       for (const type of [REVIEW_VIEW, LEGACY_REVIEW_VIEW]) for (const leaf of this.app.workspace.getLeavesOfType(type)) leaf.detach();
     });
   }
-  /** Opens the next inbox note in the same pane, so reviewing the inbox never needs a separate view. */
-  private openBeside(view: EditorView, path: string): void {
-    const info = view.state.field(editorInfoField, false), file = this.app.vault.getFileByPath(path);
-    if (info instanceof MarkdownView && file) void info.leaf.openFile(file);
-    else this.organizer?.openNote(path);
+  /** Gives every Markdown view a pill in its content container, in every view mode. */
+  private attachPills(pills: FilingPills): void {
+    const attached = new Map<MarkdownView, () => void>();
+    const sync = () => {
+      const views = this.app.workspace.getLeavesOfType('markdown').map(leaf => leaf.view).filter((view): view is MarkdownView => view instanceof MarkdownView);
+      for (const [view, detach] of attached) if (!views.includes(view)) { detach(); attached.delete(view); }
+      for (const view of views) if (!attached.has(view)) attached.set(view, pills.attach({
+        parent: view.contentEl,
+        file: () => view.file,
+        hasFocus: () => view.containerEl.contains(view.containerEl.ownerDocument.activeElement),
+        focusNote: () => { if (view.getMode() === 'source') view.editor.focus(); },
+        // The next inbox note opens in the same pane, so reviewing the inbox never needs a separate view.
+        openNote: path => { const file = this.app.vault.getFileByPath(path); if (file) void view.leaf.openFile(file); },
+      }));
+      pills.refresh();
+    };
+    this.registerEvent(this.app.workspace.on('layout-change', sync));
+    this.registerEvent(this.app.workspace.on('file-open', sync));
+    this.registerEvent(this.app.workspace.on('active-leaf-change', sync));
+    this.registerEvent(this.app.workspace.on('resize', () => pills.refresh()));
+    this.app.workspace.onLayoutReady(sync);
+    this.register(() => { for (const detach of attached.values()) detach(); attached.clear(); });
   }
   onunload(): void { this.lifecycle++; this.organizer?.dispose(); this.organizer = null; }
 }

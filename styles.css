@@ -10,6 +10,7 @@
 .note-organizer-link-button:hover { background: none; text-decoration: underline; }
 
 /* Editor corner pill: absolutely positioned, so the note never reflows. */
+.note-organizer-pill-parent { position: relative; }
 .note-organizer-pill-host { position: absolute; top: var(--size-4-2); inset-inline-end: var(--size-4-5); z-index: var(--layer-cover, 5); display: flex; flex-direction: column; align-items: flex-end; max-width: min(360px, 60%); pointer-events: none; }
 .note-organizer-pill-host > * { pointer-events: auto; }
 .note-organizer-pill { display: inline-flex; align-items: center; gap: var(--size-4-1); max-width: 100%; height: auto; padding: 2px var(--size-4-2); border: 1px solid var(--background-modifier-border); border-radius: var(--radius-l, 12px); background: var(--background-primary); box-shadow: none; color: var(--text-muted); font-size: var(--font-ui-smaller); line-height: 1.6; opacity: .65; transition: opacity .15s ease, color .15s ease; }
@@ -64,12 +65,20 @@
 .nav-folder-title[data-note-organizer-count]::after { content: attr(data-note-organizer-count); flex-shrink: 0; align-self: center; margin-inline-start: auto; padding-inline-start: var(--size-4-2); color: var(--text-faint); font-size: var(--font-ui-smaller); }
 
 /* Settings and status bar */
-.note-organizer-settings .setting-item { flex-wrap: wrap; }
+.note-organizer-settings-status:empty { display: none; }
+.note-organizer-setting-list { margin: calc(var(--size-4-2) * -1) 0 var(--size-4-2); padding-inline-start: var(--size-4-4); border-inline-start: 2px solid var(--background-modifier-border); }
+.note-organizer-setting-list:empty { display: none; }
+.note-organizer-setting-list .setting-item { padding-block: var(--size-4-1); border-top: 0; }
+.note-organizer-setting-list .setting-item-name { font-size: var(--font-ui-small); overflow-wrap: anywhere; }
+.note-organizer-history h3 { margin: var(--size-4-3) 0 var(--size-4-1); color: var(--text-muted); font-size: var(--font-ui-smaller); font-weight: var(--font-medium, 500); }
+.note-organizer-history-row { display: flex; align-items: center; gap: var(--size-4-3); padding-block: var(--size-4-2); border-bottom: 1px solid var(--background-modifier-border); }
+.note-organizer-history-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.note-organizer-history-text .note-organizer-muted, .note-organizer-history-note { font-size: var(--font-ui-smaller); }
+.note-organizer-history-note { color: var(--text-warning); }
+.note-organizer-history-name { font-weight: var(--font-medium, 500); }
+.note-organizer-history-action { flex-shrink: 0; font-size: var(--font-ui-smaller); }
 .note-organizer-settings .setting-item-info { min-width: 150px; }
-.note-organizer-settings textarea { width: 100%; }
-.note-organizer-settings summary > .setting-item-heading { display: inline-flex; margin: 0; padding-block: var(--size-4-2); border: 0; }
 .note-organizer-settings summary { color: var(--text-muted); cursor: pointer; }
-.note-organizer-recent { display: flex; flex-wrap: wrap; align-items: center; gap: var(--size-4-2); padding-block: var(--size-4-1); }
 .note-organizer-statusbar { gap: var(--size-4-2); }
 .note-organizer-status { display: inline-flex; gap: 4px; align-items: center; padding: 0; height: auto; box-shadow: none; background: transparent; color: var(--text-muted); font-size: var(--font-ui-smaller); }
 .note-organizer-status svg { width: 14px; height: 14px; }

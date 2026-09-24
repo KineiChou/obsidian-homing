@@ -91,7 +91,7 @@ export class PluginStateStore implements StateStore {
         if ((v.schemaVersion !== 1 && v.schemaVersion !== 2) || !Array.isArray(v.moveJournal)) throw storageError();
         const settings = object(v.settings);
         for (const [key, defaultValue] of Object.entries(DEFAULT_SETTINGS)) {
-          if (!(key in settings) && ['provider', 'endpoint', 'longNoteStrategy', 'folderProfilesEnabled', 'linkHints', 'explorerMarkers'].includes(key)) continue;
+          if (!(key in settings) && ['provider', 'endpoint', 'longNoteStrategy', 'folderProfilesEnabled', 'linkHints', 'explorerMarkers', 'analyzeOnOpen'].includes(key)) continue;
           if (!(key in settings) || settings[key] === null || (Array.isArray(defaultValue) ? !Array.isArray(settings[key]) : typeof settings[key] !== typeof defaultValue)) throw storageError();
         }
         const records = v.moveJournal.map(parseRecord);

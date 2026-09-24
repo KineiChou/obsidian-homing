@@ -30,13 +30,14 @@ export interface OrganizerSettings {
   readonly modelId: string;
   readonly linkHints: LinkHintStyle;
   readonly explorerMarkers: boolean;
+  readonly analyzeOnOpen: boolean;
 }
 export type LinkHintStyle = 'underline' | 'marker' | 'off';
 export const DEFAULT_SETTINGS: OrganizerSettings = {
   provider: 'jev', endpoint: PROVIDER_DEFAULTS.jev.endpoint, longNoteStrategy: 'excerpt', folderProfilesEnabled: false,
   inbox: '', includeSubfolders: true, secretName: '', autoFiling: true, autoLinks: false,
   linkScope: 'vault', excludedPaths: [], excludedDestinations: [], folderRules: [],
-  dailyRequestLimit: 100, modelId: 'jev-1.13.0', linkHints: 'underline', explorerMarkers: true,
+  dailyRequestLimit: 100, modelId: 'jev-1.13.0', linkHints: 'underline', explorerMarkers: true, analyzeOnOpen: true,
 };
 
 export function parseSettings(value: unknown): OrganizerSettings {
@@ -76,7 +77,7 @@ export function parseSettings(value: unknown): OrganizerSettings {
     inbox: safePath(string('inbox', ''), true), secretName: string('secretName', ''),
     includeSubfolders: boolean('includeSubfolders', true), autoFiling: boolean('autoFiling', true), autoLinks: boolean('autoLinks', false),
     linkScope, excludedPaths: paths('excludedPaths'), excludedDestinations: paths('excludedDestinations'), folderRules,
-    dailyRequestLimit: Number(limit), modelId, linkHints, explorerMarkers: boolean('explorerMarkers', true),
+    dailyRequestLimit: Number(limit), modelId, linkHints, explorerMarkers: boolean('explorerMarkers', true), analyzeOnOpen: boolean('analyzeOnOpen', true),
   };
 }
 function fail(): never { throw new OrganizerError('invalid-settings', 'error.settingsInvalid'); }
