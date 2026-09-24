@@ -15,7 +15,7 @@ beforeEach(() => { setLocale('en'); vi.useFakeTimers(); });
 afterEach(() => { for (const close of cleanup.splice(0)) close(); document.body.replaceChildren(); vi.useRealTimers(); });
 const TEXT = 'We encode audio with Transformer models and Attention.';
 
-function fixture(style: LinkHintStyle = 'underline') {
+function fixture(style: LinkHintStyle = 'underline', parent: HTMLElement = document.body) {
   const changes = new Emitter();
   const proposal = (text: string, noteId: number): LinkProposal => {
     const from = TEXT.indexOf(text);
@@ -31,9 +31,9 @@ function fixture(style: LinkHintStyle = 'underline') {
   };
   const host = { sessionId: () => 'session', chooseTarget: vi.fn<(proposal: LinkProposal, choose: (noteId: number) => void) => void>() };
   const hints = linkHints(controller as unknown as OrganizerController, host);
-  const view = new EditorView({ parent: document.body, state: EditorState.create({ doc: TEXT, extensions: [hints.extension] }) });
+  const view = new EditorView({ parent, state: EditorState.create({ doc: TEXT, extensions: [hints.extension] }) });
   cleanup.push(() => view.destroy());
-  return { view, hints, controller, host, marks: () => [...view.contentDOM.querySelectorAll('.note-organizer-link-hint')].map(item => item.textContent), card: () => document.body.querySelector<HTMLElement>('.note-organizer-hint-card') };
+  return { invalidate: () => { links = []; changes.emit(); }, view, hints, controller, host, marks: () => [...view.contentDOM.querySelectorAll('.note-organizer-link-hint')].map(item => item.textContent), card: () => parent.ownerDocument.body.querySelector<HTMLElement>('.note-organizer-hint-card') };
 }
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
 
@@ -76,4 +76,44 @@ it('accepts the suggestion under the cursor only through the explicit command', 
   expect(f.hints.acceptAtCursor(true)).toBe(true); expect(f.controller.confirmLinks).not.toHaveBeenCalled();
   expect(f.hints.acceptAtCursor()).toBe(true);
   expect(f.controller.confirmLinks).toHaveBeenCalledExactlyOnceWith([expect.objectContaining({ proposalId: 'Attention' })]);
+});
+
+it('popout hover uses the popout DOM realm', async () => {
+  const frame = document.createElement('iframe'); document.body.append(frame);
+  const doc = frame.contentDocument!; const win = frame.contentWindow!;
+  const f = fixture('marker', doc.body);
+  const mark = f.view.contentDOM.querySelector('.note-organizer-link-marker')!;
+  expect(mark instanceof Element).toBe(false);
+  mark.dispatchEvent(new (win as unknown as typeof window).MouseEvent('mouseover', { bubbles: true }));
+  await vi.advanceTimersByTimeAsync(301);
+  expect(f.card()).not.toBeNull();
+});
+
+it('hover invalidated before timer runs does not throw', async () => {
+  const f = fixture();
+  f.view.contentDOM.querySelector('.note-organizer-link-hint')!.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+  f.invalidate(); await flush();
+  expect(f.marks()).toEqual([]);
+  await vi.advanceTimersByTimeAsync(301);
+  expect(f.card()).toBeNull();
+});
+
+it('focus moving from editor to card preserves focused action', async () => {
+  const f = fixture(); vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+  f.view.focus(); await vi.advanceTimersByTimeAsync(11);
+  f.view.contentDOM.querySelector('.note-organizer-link-hint')!.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+  await vi.advanceTimersByTimeAsync(301);
+  const action = f.card()!.querySelector<HTMLButtonElement>('button')!;
+  action.focus(); expect(document.activeElement).toBe(action);
+  await vi.advanceTimersByTimeAsync(11);
+  expect(action.isConnected).toBe(true);
+  expect(document.activeElement).toBe(action);
+});
+
+it('delayed cursor card does not open after focus leaves pane', async () => {
+  const f = fixture(); vi.spyOn(f.view, 'coordsAtPos').mockReturnValue({left: 10, right: 20, top: 10, bottom: 20}); const focus = vi.spyOn(f.view, 'hasFocus', 'get').mockReturnValue(true);
+  f.view.dispatch({ selection: EditorSelection.cursor(TEXT.indexOf('Attention') + 2) });
+  focus.mockReturnValue(false); f.view.update([]);
+  await vi.advanceTimersByTimeAsync(701);
+  expect(f.card()).toBeNull();
 });

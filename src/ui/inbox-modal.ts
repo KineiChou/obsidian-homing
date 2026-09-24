@@ -1,6 +1,7 @@
 import { App, Modal, setIcon } from 'obsidian';
 import type { OrganizerController } from './types';
-import type { FilingEntry } from '../filing/types';
+import type { FilingEntry, SourceVersion } from '../filing/types';
+import { OrganizerError } from '../core/errors';
 import { button, node } from './dom';
 import { errorText, t, translateMessage } from '../i18n';
 
@@ -27,7 +28,7 @@ function plainStart(text: string): string {
 export class InboxModal extends Modal {
   private readonly selected = new Set<string>();
   private readonly seen = new Set<string>();
-  private readonly destinations = new Map<string, { proposalId: string; id: string }>();
+  private readonly destinations = new Map<string, { proposalId: string; id: string; source: SourceVersion }>();
   private readonly results = new Map<string, Result>();
   private readonly previews = new Map<string, string>();
   private list!: HTMLElement;
@@ -38,6 +39,7 @@ export class InboxModal extends Modal {
   private busy = false;
   private outcome = '';
   private alive = false;
+  private choiceGeneration = 0;
   constructor(app: App, private readonly controller: OrganizerController, private readonly host: InboxModalHost, private readonly preselect?: readonly string[]) { super(app); }
   onOpen(): void {
     this.alive = true; this.setTitle(t('organizer.title'));
@@ -55,9 +57,13 @@ export class InboxModal extends Modal {
     const id = manual && manual.proposalId === (entry.proposal?.id ?? '') ? manual.id : entry.proposal?.selected ?? null;
     return id && this.controller.folders().some(folder => folder.id === id) ? id : null;
   }
+  private source(entry: FilingEntry): SourceVersion | undefined {
+    const manual = this.destinations.get(entry.path);
+    return manual?.proposalId === (entry.proposal?.id ?? '') ? manual.source : entry.proposal?.source;
+  }
   private render(): void {
     if (!this.alive) return;
-    const entries = this.entries(), fileable = entries.filter(entry => this.target(entry) && entry.status !== 'analyzing');
+    const entries = this.entries(), fileable = entries.filter(entry => this.target(entry) && this.source(entry) && entry.status !== 'analyzing');
     for (const entry of fileable) if (!this.seen.has(entry.path)) {
       this.seen.add(entry.path);
       if (this.preselect ? this.preselect.includes(entry.path) : !closeCall(entry) && !this.destinations.has(entry.path)) this.selected.add(entry.path);
@@ -103,20 +109,30 @@ export class InboxModal extends Modal {
     } else if (result?.status === 'moving' || entry.status === 'moving') node(detail, 'span', t('organizer.moving'));
     else if (folder) {
       node(detail, 'span', '→ ' + breadcrumb(folder.path));
-      const change = button(detail, t('inbox.change'), () => this.choose(entry)); change.className = 'note-organizer-link-button'; change.dataset.focus = 'change:' + entry.path;
+      const change = button(detail, t('inbox.change'), () => this.choose(entry)); change.className = 'note-organizer-link-button'; change.dataset.focus = 'change:' + entry.path; change.disabled = this.busy;
       if (closeCall(entry) && !this.destinations.has(entry.path)) node(detail, 'span', t('inbox.closeCall', { count: Math.min(2, closeAlternatives(entry)) }), 'note-organizer-muted');
     } else {
       node(detail, 'span', entry.status === 'analyzing' ? t('organizer.preparing') : entry.message ? translateMessage(entry.message) : t('organizer.undecided'), 'note-organizer-muted');
-      if (entry.status !== 'analyzing') { const choose = button(detail, t('organizer.choose'), () => this.choose(entry)); choose.className = 'note-organizer-link-button'; choose.dataset.focus = 'change:' + entry.path; }
+      if (entry.status !== 'analyzing') { const choose = button(detail, t('organizer.choose'), () => this.choose(entry)); choose.className = 'note-organizer-link-button'; choose.dataset.focus = 'change:' + entry.path; choose.disabled = this.busy; }
     }
     if (result?.status === 'failed') { const status = node(row, 'p', result.message, 'note-organizer-feedback'); status.setAttribute('role', 'status'); }
     const preview = this.previews.get(entry.path);
     if (preview !== undefined) node(row, 'p', preview, 'note-organizer-inbox-preview');
   }
   private choose(entry: FilingEntry): void {
+    if (!this.alive || this.busy) return;
+    const generation = ++this.choiceGeneration, proposalId = entry.proposal?.id ?? '';
+    const current = () => this.alive && !this.busy && generation === this.choiceGeneration && this.entries().some(item => item.path === entry.path && (item.proposal?.id ?? '') === proposalId);
     this.host.chooseDestination(id => {
-      if (!this.alive) return;
-      this.destinations.set(entry.path, { proposalId: entry.proposal?.id ?? '', id }); this.selected.add(entry.path); this.seen.add(entry.path); this.render();
+      if (!current()) return;
+      const select = (source: SourceVersion) => {
+        if (!current()) return;
+        this.destinations.set(entry.path, { proposalId, id, source: { ...source } }); this.results.delete(entry.path); this.selected.add(entry.path); this.seen.add(entry.path); this.render();
+      };
+      if (entry.proposal) select(entry.proposal.source);
+      else void this.controller.prepareMove(entry.path, id).then(plan => select(plan.source)).catch(error => {
+        if (current()) { this.results.set(entry.path, { status: 'failed', message: errorText(error) }); this.render(); }
+      });
     });
   }
   private async togglePreview(path: string): Promise<void> {
@@ -128,13 +144,19 @@ export class InboxModal extends Modal {
   private updateSubmit(): void { this.submit.textContent = t('inbox.fileSelected', { count: this.selected.size }); this.submit.disabled = this.busy || this.selected.size === 0; }
   private async fileSelected(): Promise<void> {
     if (this.busy) return;
-    const batch = this.entries().filter(entry => this.selected.has(entry.path)).map(entry => ({ path: entry.path, target: this.target(entry) })).filter((item): item is { path: string; target: string } => !!item.target);
-    this.busy = true; this.outcome = ''; let done = 0;
+    const batch = this.entries().filter(entry => this.selected.has(entry.path)).flatMap(entry => {
+      const target = this.target(entry), source = this.source(entry);
+      return target && source ? [{ path: entry.path, target, source: { ...source } }] : [];
+    });
+    this.busy = true; this.choiceGeneration++; this.outcome = ''; let done = 0;
     for (const item of batch) {
       // Each note is prepared and revalidated on its own; one failure never stops or hides the others.
       this.results.set(item.path, { status: 'moving' }); this.render();
       try {
         const plan = await this.controller.prepareMove(item.path, item.target);
+        const source = plan.source;
+        if (source.noteId !== item.source.noteId || source.path !== item.source.path || source.revision !== item.source.revision || source.contentHash !== item.source.contentHash) throw new OrganizerError('stale', 'error.moveStale');
+        if (!this.alive) return;
         await this.controller.confirmMove(plan);
         this.results.set(item.path, { status: 'done', recordId: plan.id, folder: plan.destination.slice(0, plan.destination.lastIndexOf('/')) }); this.selected.delete(item.path); done++;
       } catch (error) { this.results.set(item.path, { status: 'failed', message: errorText(error) }); }
@@ -142,5 +164,5 @@ export class InboxModal extends Modal {
     }
     this.busy = false; this.outcome = t('inbox.result', { done, total: batch.length }); this.signature = ''; this.render();
   }
-  onClose(): void { this.alive = false; this.unsubscribe?.(); this.contentEl.replaceChildren(); }
+  onClose(): void { this.alive = false; this.choiceGeneration++; this.unsubscribe?.(); this.contentEl.replaceChildren(); }
 }

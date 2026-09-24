@@ -71,3 +71,42 @@ it('previews plain text, opens a note in the editor, and sends undecided notes t
   f.button('Analyze…').click(); expect(f.host.analyze).toHaveBeenCalledWith(['Inbox/Raw.md']);
   f.button('Alpha').click(); expect(f.host.openNote).toHaveBeenCalledWith('Inbox/Alpha.md'); expect(f.modal.contentEl.isConnected).toBe(false);
 });
+
+
+it('locks batch destinations and ignores a picker opened before confirmation', async () => {
+  const f = fixture();
+  f.button('Change', f.row('Beta')).click();
+  const choose = f.host.chooseDestination.mock.calls[0]![0];
+  let release!: () => void;
+  f.controller.confirmMove.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+  f.controller.prepareMove.mockImplementation(async (path, folderId) => ({ id: 'plan-' + path, source: { noteId: 1, path, revision: 1, contentHash: 'h' }, destination: `${folderId === 'projects' ? 'Projects' : 'Resources/Reading'}/${path.split('/').at(-1)}`, folderId, foldersRevision: 1, settingsRevision: 1 }));
+  f.button('File 2 notes').click(); await settled();
+  const change = f.button('Change', f.row('Beta'));
+  expect(change.disabled).toBe(true); change.click();
+  expect(f.host.chooseDestination).toHaveBeenCalledOnce();
+  choose('projects');
+  expect(f.row('Beta').textContent).toContain('→ Resources › Reading');
+  release(); await settled();
+  expect(f.controller.confirmMove.mock.calls[1]![0].destination).toBe('Resources/Reading/Beta.md');
+  f.modal.close();
+});
+
+it('binds a manual destination to the current source of an undecided note', async () => {
+  const f = fixture([]);
+  f.button('Other location…', f.row('Raw')).click();
+  f.host.chooseDestination.mock.calls[0]![0]('projects'); await settled();
+  expect(f.controller.prepareMove).toHaveBeenCalledExactlyOnceWith('Inbox/Raw.md', 'projects');
+  expect(f.row('Raw').textContent).toContain('→ Projects');
+  f.button('File 1 notes').click(); await settled();
+  expect(f.controller.confirmMove).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ folderId: 'projects', source: expect.objectContaining({ path: 'Inbox/Raw.md', contentHash: 'h' }) }));
+  f.modal.close();
+});
+
+it('does not start a prepared move after the modal is closed', async () => {
+  const f = fixture(['Inbox/Alpha.md']);
+  const plan = await f.controller.prepareMove('Inbox/Alpha.md', 'reading');
+  let release!: (plan: MovePlan) => void;
+  f.controller.prepareMove.mockImplementationOnce(() => new Promise<MovePlan>(resolve => { release = resolve; }));
+  f.button('File 1 notes').click(); f.modal.close(); release(plan); await settled();
+  expect(f.controller.confirmMove).not.toHaveBeenCalled();
+});

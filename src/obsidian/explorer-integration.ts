@@ -75,25 +75,33 @@ export function registerExplorerIntegration(plugin: Plugin, controller: Organize
   plugin.registerEvent(app.workspace.on('files-menu', (menu, files) => manyItems(build => { menu.addItem(build); }, files)));
 
   // Notebook Navigator renders its own menus and does not emit file-menu; use its public menu API (1.2.0+).
-  let navigatorRegistered = false;
+  let alive = true;
+  let registeredApi: NavigatorApi | undefined;
+  const navigatorDisposers: (() => void)[] = [];
+  const clearNavigator = () => {
+    registeredApi = undefined;
+    for (const dispose of navigatorDisposers.splice(0)) { try { dispose(); } catch { /* The navigator may already be unloaded. */ } }
+  };
   const registerNavigator = () => {
-    if (navigatorRegistered) return;
+    if (!alive) return;
     const api = navigatorApi(plugin);
+    if (api === registeredApi) return;
+    clearNavigator();
     if (!api) return;
-    navigatorRegistered = true;
-    const disposers = [
+    registeredApi = api;
+    navigatorDisposers.push(
       api.menus.registerFileMenu(({ addItem, file, selection }) => { if (selection.mode === 'multiple') manyItems(addItem, selection.files); else fileItems(addItem, file); }),
       api.menus.registerFolderMenu(({ addItem, folder }) => folderItems(addItem, folder)),
-    ];
-    plugin.register(() => { for (const dispose of disposers) { try { dispose(); } catch { /* The navigator may already be unloaded. */ } } });
+    );
   };
+  plugin.register(() => { alive = false; clearNavigator(); });
   app.workspace.onLayoutReady(registerNavigator);
   plugin.registerEvent(app.workspace.on('layout-change', registerNavigator));
 
   const markers = new ExplorerMarkers(plugin, controller);
   plugin.register(controller.subscribe(() => markers.schedule()));
   plugin.registerEvent(app.workspace.on('layout-change', () => markers.schedule()));
-  app.workspace.onLayoutReady(() => markers.schedule());
+  app.workspace.onLayoutReady(() => { if (alive) markers.schedule(); });
   plugin.register(() => markers.dispose());
 }
 

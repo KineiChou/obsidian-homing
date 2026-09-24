@@ -18,6 +18,8 @@ const HOVER_MS = 300, CURSOR_MS = 700, LEAVE_MS = 250;
 const refresh = StateEffect.define<null>();
 const ATTRIBUTE = 'data-note-organizer-proposals';
 const breadcrumb = (path: string) => path.replace(/\.md$/, '').split('/').join(' › ');
+// Popout editors can send DOM nodes from another window's realm.
+const isNode = (value: EventTarget | null): value is Node => !!value && 'nodeType' in value;
 
 class MarkerWidget extends WidgetType {
   constructor(private readonly ids: readonly string[]) { super(); }
@@ -116,14 +118,17 @@ class LinkHintView {
       this.quietUntil = Date.now() + QUIET_MS; this.closeCard();
       clearTimeout(this.quietTimer); this.quietTimer = setTimeout(() => this.requestRefresh(), QUIET_MS + 10);
     }
-    if (update.docChanged || update.transactions.some(transaction => transaction.effects.some(effect => effect.is(refresh))) || update.focusChanged) {
+    const refreshed = update.transactions.some(transaction => transaction.effects.some(effect => effect.is(refresh)));
+    if (update.docChanged || refreshed || update.focusChanged) {
       this.decorations = this.build(); this.builtKey = this.key();
-      if (this.card) this.renderCard();
+      // Moving focus to a card action must preserve the button through mouseup.
+      if (this.card && refreshed) this.renderCard();
     }
+    if (update.focusChanged && !this.view.hasFocus) clearTimeout(this.cursorTimer);
     if (update.selectionSet && !update.docChanged) this.watchCursor();
   }
   private idsAt(target: EventTarget | null): string[] {
-    const element = target instanceof Element ? target.closest(`[${ATTRIBUTE}]`) : null;
+    const element = isNode(target) && target.nodeType === 1 ? (target as Element).closest(`[${ATTRIBUTE}]`) : null;
     return element ? (element.getAttribute(ATTRIBUTE) ?? '').split(' ').filter(Boolean) : [];
   }
   hover(event: MouseEvent): void {
@@ -136,13 +141,14 @@ class LinkHintView {
   leave(event: MouseEvent): void {
     if (!this.idsAt(event.target).length) return;
     clearTimeout(this.hoverTimer);
-    if (this.card && event.relatedTarget instanceof Node && this.card.contains(event.relatedTarget)) return;
+    if (this.card && isNode(event.relatedTarget) && this.card.contains(event.relatedTarget)) return;
     this.leaveTimer = setTimeout(() => this.closeCard(), LEAVE_MS);
   }
   private watchCursor(): void {
     clearTimeout(this.cursorTimer);
     if (!this.view.hasFocus || this.style() !== 'underline') return;
     this.cursorTimer = setTimeout(() => {
+      if (!this.alive || !this.view.hasFocus || this.style() !== 'underline') return;
       const proposal = this.atCursor();
       if (!proposal || this.decorations.size === 0) { if (this.card && !this.card.matches(':hover')) this.closeCard(); return; }
       const start = this.view.coordsAtPos(proposal.input.anchor.from), end = this.view.coordsAtPos(proposal.input.anchor.to);
@@ -169,9 +175,11 @@ class LinkHintView {
       doc.addEventListener('keydown', this.keydown, true);
     }
     this.cardIds = ids; this.renderCard();
+    const card = this.card;
+    if (!card) return;
     const width = Math.min(320, doc.documentElement.clientWidth - 16);
-    this.card.style.left = Math.max(8, Math.min(rect.left, doc.documentElement.clientWidth - width - 8)) + 'px';
-    this.card.style.top = rect.bottom + 6 + 'px'; this.card.style.width = width + 'px';
+    card.style.left = Math.max(8, Math.min(rect.left, doc.documentElement.clientWidth - width - 8)) + 'px';
+    card.style.top = rect.bottom + 6 + 'px'; card.style.width = width + 'px';
   }
   private renderCard(): void {
     const card = this.card; if (!card) return;
@@ -203,7 +211,7 @@ class LinkHintView {
     this.renderCard();
   }
   private closeCard(): void {
-    clearTimeout(this.hoverTimer); clearTimeout(this.leaveTimer);
+    clearTimeout(this.hoverTimer); clearTimeout(this.leaveTimer); clearTimeout(this.cursorTimer);
     if (!this.card) return;
     this.view.dom.ownerDocument.removeEventListener('keydown', this.keydown, true);
     this.card.remove(); this.card = null; this.cardIds = [];
