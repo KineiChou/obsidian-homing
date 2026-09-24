@@ -138,19 +138,19 @@ class FilingPill {
     if (excerpt) node(popover, 'p', t('organizer.excerpt', { sent: excerpt.sentChars, total: excerpt.originalChars }), 'note-organizer-muted');
     if (attachments) node(popover, 'p', t('pill.attachments', { count: attachments }), 'note-organizer-muted');
     const actions = node(popover, 'div', undefined, 'note-organizer-actions');
+    const status = node(popover, 'p', this.feedback, 'note-organizer-feedback'); status.setAttribute('role', 'status'); status.hidden = !this.feedback;
     if (targetId) {
       const accept = button(actions, t('organizer.file'), () => { void this.accept(); }, true); accept.dataset.action = 'accept'; accept.disabled = true;
-      void this.prepare(entry.path, targetId, accept);
+      void this.prepare(entry.path, targetId, accept, status);
     } else button(actions, t('organizer.analyzeOne'), () => { this.controller.analyzeNote(entry.path); this.toggle(false); }).dataset.action = 'analyze';
     const choose = button(actions, t('organizer.choose'), () => this.hostActions.chooseDestination(id => this.choose(entry, id))); choose.dataset.action = 'choose';
     const more = button(actions, '…', () => this.hostActions.menu(more, [
       ...(targetId ? [{ title: t('pill.reanalyze'), run: () => { this.controller.analyzeNote(entry.path); this.toggle(false); } }] : []),
       { title: t('organizer.ignore'), run: () => { this.controller.ignoreNote(entry.path); this.toggle(false); } },
     ])); more.setAttribute('aria-label', t('organizer.more')); more.dataset.action = 'more';
-    if (this.feedback) { const status = node(popover, 'p', this.feedback, 'note-organizer-feedback'); status.setAttribute('role', 'status'); }
     if (this.focusOnReady && !targetId) { this.focusOnReady = false; (actions.querySelector('button') as HTMLButtonElement | null)?.focus(); }
   }
-  private async prepare(path: string, targetId: string, accept: HTMLButtonElement): Promise<void> {
+  private async prepare(path: string, targetId: string, accept: HTMLButtonElement, status: HTMLElement): Promise<void> {
     const generation = ++this.generation; this.plan = null;
     try {
       const plan = await this.controller.prepareMove(path, targetId);
@@ -159,7 +159,8 @@ class FilingPill {
       if (this.focusOnReady) { this.focusOnReady = false; accept.focus(); }
     } catch (error) {
       if (!this.alive || generation !== this.generation || !accept.isConnected) return;
-      this.feedback = errorText(error); this.signature = ''; this.render();
+      // Updating this attempt's status must not render a new preparation attempt.
+      this.feedback = errorText(error); status.textContent = this.feedback; status.hidden = false;
     }
   }
   private choose(entry: FilingEntry, id: string): void {
@@ -187,7 +188,7 @@ class FilingPill {
     const folder = record.to.slice(0, record.to.lastIndexOf('/'));
     node(group, 'span', t('organizer.filedAt', { path: breadcrumb(folder) }), 'note-organizer-pill-label');
     const guarded = Date.now() < this.guardUntil;
-    const undo = button(group, t('organizer.undo'), () => { undo.disabled = true; void this.controller.undoMove(record.id).then(() => { this.lastMove = null; this.signature = ''; this.render(); }).catch(error => { this.feedback = errorText(error); undo.disabled = false; }); });
+    const undo = button(group, t('organizer.undo'), () => { undo.disabled = true; void this.controller.undoMove(record.id).then(() => { this.lastMove = null; this.signature = ''; this.render(); }).catch(error => { this.feedback = errorText(error); this.signature = ''; this.render(); }); });
     undo.className = 'note-organizer-link-button'; undo.dataset.action = 'undo'; undo.disabled = guarded;
     const open = this.controller.state().filing.filter(entry => OPEN_STATUSES.has(entry.status) && entry.path !== record.to);
     const next = this.controller.nextInboxNote(record.to);

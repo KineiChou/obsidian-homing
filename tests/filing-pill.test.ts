@@ -95,3 +95,27 @@ it('keeps the filed result through the rename but clears it after switching to a
   f.editors[0]!.setState(EditorState.create({ doc: 'Other', extensions: [editorInfoField.init(() => other), f.pills.extension] }));
   expect(f.editors[0]!.dom.querySelector<HTMLElement>('.note-organizer-pill-host')!.hidden).toBe(true);
 });
+
+
+it('reports a persistent preparation error without retrying by itself', async () => {
+  const f = fixture();
+  f.controller.prepareMove.mockImplementation(() => f.controller.prepareMove.mock.calls.length < 4
+    ? Promise.reject(new Error('persistent destination conflict'))
+    : new Promise<MovePlan>(() => undefined));
+  f.button('→ Reading').click();
+  await settled(); await settled();
+  expect(f.controller.prepareMove).toHaveBeenCalledTimes(1);
+});
+
+it('displays failed undo feedback immediately', async () => {
+  vi.useFakeTimers(); const f = fixture();
+  f.button('→ Reading').click(); await settled(); f.button('File note').click(); await settled();
+  await vi.advanceTimersByTimeAsync(401);
+  f.controller.undoMove.mockRejectedValue(new Error('destination occupied'));
+  f.button('Undo').click(); await settled();
+  expect(f.pill().querySelector('.note-organizer-feedback')).not.toBeNull();
+  expect(f.button('Undo').disabled).toBe(false);
+  f.button('Undo').click(); await settled();
+  expect(f.controller.undoMove).toHaveBeenCalledTimes(2);
+  expect(f.button('Undo').disabled).toBe(false);
+});
