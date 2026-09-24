@@ -22,7 +22,7 @@ it('invalidates the actual queue on unsaved editing so folder events cannot revi
   expect(controller.state().filing[0]?.status).toBe('ready');
   const info = { file, editor: { getValue: () => view.state.doc.toString() } } as unknown as MarkdownFileInfo;
   app.workspace.activeEditor = info;
-  const view = new EditorView({ parent: document.body, state: EditorState.create({ doc: file.body, extensions: [markdown(), editorInfoField.init(() => info), controller.editors.extension, filingBanner(controller)] }) });
+  const view = new EditorView({ parent: document.body, state: EditorState.create({ doc: file.body, extensions: [markdown(), editorInfoField.init(() => info), controller.editors.extension, filingBanner(controller, () => undefined)] }) });
   cleanup.push(() => { view.destroy(); controller.dispose(); plugin.unload(); });
   await Promise.resolve(); await Promise.resolve();
   expect(view.dom.querySelector('.note-organizer-banner')?.textContent).toContain('Resources');
