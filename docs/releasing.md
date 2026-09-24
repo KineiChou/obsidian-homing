@@ -4,7 +4,7 @@
 
 ## 当前验证范围
 
-自动化检查覆盖领域逻辑、编辑器事务和宿主／HTTP／UI 替身。已有 Jev 固定合成示例冒烟记录，不能据此认定其他提供方、本地模型或真实 Obsidian 的行为已验收。具体证据以 [validation.md](validation.md) 为准，不将未完成的 issue 视为已验证。
+自动化检查覆盖领域逻辑、编辑器事务和宿主／HTTP／UI 替身。Jev 固定合成对照、真实本地 Ollama 协议和 Obsidian 1.13.7 的部分原生场景已有记录；最低版本与完整宿主矩阵仍未完成。具体证据以 [validation.md](validation.md) 为准，不将未完成的 issue 视为已验证。
 
 对外发布前需要明确名称、作者署名和许可证，完成专用测试知识库中的宿主验收（链接更新、编辑器撤销、原生视图与重启恢复），并复核 README 的服务、费用和数据发送披露。真实笔记不得作为仓库夹具或上传为发布资产。
 
@@ -15,7 +15,7 @@
 本地可先运行只读检查：
 
 ```sh
-node scripts/verify-release.mjs 0.2.0
+node scripts/verify-release.mjs 0.2.1
 npm run check
 ```
 

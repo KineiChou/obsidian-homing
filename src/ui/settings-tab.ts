@@ -38,19 +38,21 @@ export function renderSettings(container: HTMLElement, app: App, controller: Org
     new Setting(container).setName(t('settings.endpoint')).addText(input => { input.setValue(configuration.endpoint); input.inputEl.addEventListener('change', () => { void save({ endpoint: input.getValue().trim() }).then(() => { connectionDescription.textContent = t('settings.connectionHelp', { provider: PROVIDER_DEFAULTS[controller.settings().provider].name, endpoint: controller.settings().endpoint }); }).catch(() => undefined); }); });
     new Setting(container).setName(t('settings.model')).addText(input => { input.setValue(configuration.modelId); input.inputEl.addEventListener('change', () => change({ modelId: input.getValue().trim() })); });
   }
-  const key = new Setting(container).setName(t('settings.key')).setDesc(t('settings.keyHelp'));
+  const key = new Setting(container).setName(t('settings.key')).setDesc(t(configuration.provider === 'ollama' ? 'settings.localKeyHelp' : 'settings.keyHelp'));
   new SecretComponent(app, key.controlEl).setValue(configuration.secretName).onChange(name => change({ secretName: name }));
   new Setting(container).setName(t('settings.connection')).setDesc(t('settings.enableHelp')).addButton(control => control.setButtonText(t(controller.enabled() ? 'settings.check' : 'settings.enable')).setCta().onClick(async () => {
     if (!controller.settings().inbox) { status.textContent = t('organizer.pickInbox'); return; }
     control.setDisabled(true); status.textContent = t('settings.checking');
-    try { await controller.testConnection(); controller.setEnabled(true); control.setButtonText(t('settings.check')); status.textContent = t('settings.connected'); }
+    try { await controller.testConnection(); controller.setEnabled(true); control.setButtonText(t('settings.check')); status.textContent = t('settings.connected'); if (options instanceof HTMLDetailsElement) options.open = true; }
     catch (error) { status.textContent = errorText(error); }
     finally { control.setDisabled(false); }
   }));
-  new Setting(container).setName(t('settings.automation')).setHeading();
-  new Setting(container).setName(t('settings.autoFiling')).setDesc(t('settings.autoFilingHelp')).addToggle(toggle => toggle.setValue(configuration.autoFiling).onChange(value => change({ autoFiling: value })));
-  new Setting(container).setName(t('settings.autoLinks')).setDesc(t('settings.autoLinksHelp')).addToggle(toggle => toggle.setValue(configuration.autoLinks).onChange(value => change({ autoLinks: value })));
-  const advanced = details(container, t('settings.scope'));
+  const options = configuration.inbox ? container : details(container, t('settings.options'));
+  new Setting(options).setName(t('settings.automation')).setHeading();
+  new Setting(options).setName(t('settings.autoFiling')).setDesc(t('settings.autoFilingHelp')).addToggle(toggle => toggle.setValue(configuration.autoFiling).onChange(value => change({ autoFiling: value })));
+  new Setting(options).setName(t('settings.autoLinks')).setDesc(t('settings.autoLinksHelp')).addToggle(toggle => toggle.setValue(configuration.autoLinks).onChange(value => change({ autoLinks: value })));
+  const advanced = node(options, 'details');
+  new Setting(node(advanced, 'summary')).setName(t('settings.scope')).setHeading();
   new Setting(advanced).setName(t('settings.subfolders')).addToggle(toggle => toggle.setValue(configuration.includeSubfolders).onChange(value => change({ includeSubfolders: value })));
   new Setting(advanced).setName(t('settings.linkScope')).addDropdown(dropdown => dropdown.addOption('vault', t('settings.vault')).addOption('inbox', t('settings.inboxOnly')).setValue(configuration.linkScope).onChange(value => change({ linkScope: value as 'vault' | 'inbox' })));
   new Setting(advanced).setName(t('settings.excluded')).setDesc(t('settings.excludedHelp')).addTextArea(input => { input.setValue(configuration.excludedPaths.join('\n')); input.inputEl.rows = 3; input.inputEl.addEventListener('change', () => change({ excludedPaths: input.getValue().split('\n').map(path => path.trim()).filter(Boolean) })); });
@@ -60,7 +62,8 @@ export function renderSettings(container: HTMLElement, app: App, controller: Org
   new Setting(advanced).setName(t('settings.excerpt')).setDesc(t('settings.excerptHelp')).addToggle(toggle => toggle.setValue(configuration.longNoteStrategy === 'excerpt').onChange(value => change({ longNoteStrategy: value ? 'excerpt' : 'full' })));
   new Setting(advanced).setName(t('settings.profiles')).setDesc(t('settings.profilesHelp')).addToggle(toggle => toggle.setValue(configuration.folderProfilesEnabled).onChange(value => change({ folderProfilesEnabled: value })));
   new Setting(advanced).setName(t('settings.purpose')).setDesc(t('settings.purposeHelp')).addButton(control => control.setButtonText(t('settings.chooseFolder')).onClick(() => new TargetPicker(app, controller.allFolders().filter(path => path !== controller.settings().inbox), path => path, path => new FolderRuleModal(app, controller, path).open()).open()));
-  const manage = details(container, t('settings.manage'));
+  const manage = node(options, 'details');
+  new Setting(node(manage, 'summary')).setName(t('settings.manage')).setHeading();
   new Setting(manage).setName(t('settings.restore')).setDesc(t('settings.restoreHelp')).addButton(control => control.setButtonText(t('settings.restoreAction')).onClick(() => { controller.restoreIgnored(); status.textContent = t('settings.restored'); }));
   new Setting(manage).setName(t('settings.pause')).setDesc(t('settings.pauseHelp')).addToggle(toggle => toggle.setValue(!controller.enabled()).onChange(paused => controller.setEnabled(!paused)));
 }

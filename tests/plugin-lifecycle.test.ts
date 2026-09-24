@@ -13,6 +13,7 @@ vi.mock('../src/ui/review-view', () => ({ REVIEW_VIEW: 'note-organizer-inbox', L
 vi.mock('../src/ui/settings-tab', () => ({ OrganizerSettingsTab: class {} }));
 vi.mock('../src/ui/link-modal', () => ({ LinkSuggestionsModal: class {} }));
 vi.mock('../src/ui/filing-banner', () => ({ filingBanner: vi.fn() }));
+vi.mock('../src/ui/target-picker', () => ({ DestinationPicker: class {} }));
 
 beforeEach(() => vi.clearAllMocks());
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }

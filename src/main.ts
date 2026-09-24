@@ -4,6 +4,7 @@ import { OrganizerReviewView, REVIEW_VIEW, LEGACY_REVIEW_VIEW } from './ui/revie
 import { OrganizerSettingsTab } from './ui/settings-tab';
 import { LinkSuggestionsModal } from './ui/link-modal';
 import { filingBanner } from './ui/filing-banner';
+import { DestinationPicker } from './ui/target-picker';
 import { errorText, setLocale, t } from './i18n';
 
 export default class NoteOrganizerPlugin extends Plugin {
@@ -20,7 +21,7 @@ export default class NoteOrganizerPlugin extends Plugin {
     this.registerView(REVIEW_VIEW, leaf => new OrganizerReviewView(leaf, organizer));
     this.registerView(LEGACY_REVIEW_VIEW, leaf => new OrganizerReviewView(leaf, organizer, LEGACY_REVIEW_VIEW));
     this.addSettingTab(new OrganizerSettingsTab(this.app, this, organizer));
-    this.registerEditorExtension(filingBanner(organizer));
+    this.registerEditorExtension(filingBanner(organizer, choose => new DestinationPicker(this.app, organizer, choose).open()));
     const status = this.addStatusBarItem(); status.classList.add('note-organizer-statusbar');
     const open = status.createEl('button', { cls: 'note-organizer-status' }); open.type = 'button';
     const icon = open.createSpan(), count = open.createSpan();

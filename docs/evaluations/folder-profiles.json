@@ -1,0 +1,169 @@
+{
+  "status": "completed",
+  "corpus": "folder-profiles-synthetic-2026-09-24",
+  "model": "jev-1.13.0",
+  "folderCount": 300,
+  "sampleCount": 7,
+  "maxRequests": 40,
+  "rows": [
+    {
+      "id": "machine-learning",
+      "profiles": false,
+      "expected": "f0",
+      "selected": "f0",
+      "hit": true,
+      "requests": 2,
+      "inputTokens": 15106,
+      "unknownTokenResponses": 0
+    },
+    {
+      "id": "machine-learning",
+      "profiles": true,
+      "expected": "f0",
+      "selected": "f0",
+      "hit": true,
+      "requests": 1,
+      "inputTokens": 5786,
+      "unknownTokenResponses": 0
+    },
+    {
+      "id": "electrical-engineering",
+      "profiles": true,
+      "expected": "f1",
+      "selected": "f1",
+      "hit": true,
+      "requests": 1,
+      "inputTokens": 5772,
+      "unknownTokenResponses": 0
+    },
+    {
+      "id": "electrical-engineering",
+      "profiles": false,
+      "expected": "f1",
+      "selected": null,
+      "hit": false,
+      "requests": 2,
+      "inputTokens": 15049,
+      "unknownTokenResponses": 0
+    },
+    {
+      "id": "gardening",
+      "profiles": false,
+      "expected": "f2",
+      "selected": "f4",
+      "hit": false,
+      "requests": 2,
+      "inputTokens": 15106,
+      "unknownTokenResponses": 0
+    },
+    {
+      "id": "gardening",
+      "profiles": true,
+      "expected": "f2",
+      "selected": "f2",
+      "hit": true,
+      "requests": 1,
+      "inputTokens": 5776,
+      "unknownTokenResponses": 0
+    },
+    {
+      "id": "music",
+      "profiles": true,
+      "expected": "f3",
+      "selected": "f3",
+      "hit": true,
+      "requests": 1,
+      "inputTokens": 5773,
+      "unknownTokenResponses": 0
+    },
+    {
+      "id": "music",
+      "profiles": false,
+      "expected": "f3",
+      "selected": "f3",
+      "hit": true,
+      "requests": 2,
+      "inputTokens": 15064,
+      "unknownTokenResponses": 0
+    },
+    {
+      "id": "astronomy",
+      "profiles": false,
+      "expected": "f4",
+      "selected": "f4",
+      "hit": true,
+      "requests": 2,
+      "inputTokens": 15104,
+      "unknownTokenResponses": 0
+    },
+    {
+      "id": "astronomy",
+      "profiles": true,
+      "expected": "f4",
+      "selected": "f4",
+      "hit": true,
+      "requests": 1,
+      "inputTokens": 5775,
+      "unknownTokenResponses": 0
+    },
+    {
+      "id": "baking",
+      "profiles": true,
+      "expected": "f5",
+      "selected": "f5",
+      "hit": true,
+      "requests": 1,
+      "inputTokens": 5767,
+      "unknownTokenResponses": 0
+    },
+    {
+      "id": "baking",
+      "profiles": false,
+      "expected": "f5",
+      "selected": "f5",
+      "hit": true,
+      "requests": 2,
+      "inputTokens": 15060,
+      "unknownTokenResponses": 0
+    },
+    {
+      "id": "ambiguous-unassigned",
+      "profiles": false,
+      "expected": null,
+      "selected": null,
+      "hit": true,
+      "requests": 2,
+      "inputTokens": 15033,
+      "unknownTokenResponses": 0
+    },
+    {
+      "id": "ambiguous-unassigned",
+      "profiles": true,
+      "expected": null,
+      "selected": null,
+      "hit": true,
+      "requests": 2,
+      "inputTokens": 27938,
+      "unknownTokenResponses": 0
+    }
+  ],
+  "summary": [
+    {
+      "profiles": false,
+      "cases": 7,
+      "hits": 5,
+      "requests": 14,
+      "inputTokens": 105522,
+      "unknownTokenResponses": 0
+    },
+    {
+      "profiles": true,
+      "cases": 7,
+      "hits": 7,
+      "requests": 8,
+      "inputTokens": 62587,
+      "unknownTokenResponses": 0
+    }
+  ],
+  "limitation": "Small synthetic evaluation; paths are deliberately ambiguous. Results do not establish accuracy on real vaults. inputTokens sum only known service counts; inspect unknownTokenResponses."
+}
