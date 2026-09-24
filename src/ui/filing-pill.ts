@@ -1,6 +1,4 @@
-import { editorInfoField, setIcon } from 'obsidian';
-import { ViewPlugin, type EditorView, type ViewUpdate } from '@codemirror/view';
-import type { Extension } from '@codemirror/state';
+import { setIcon } from 'obsidian';
 import type { OrganizerController } from './types';
 import type { FilingEntry, MovePlan } from '../filing/types';
 import { button, node } from './dom';
@@ -8,10 +6,21 @@ import { errorText, t, translateMessage } from '../i18n';
 
 export interface PillHost {
   chooseDestination(choose: (id: string) => void): void;
-  openNote(view: EditorView, path: string): void;
   menu(anchor: HTMLElement, items: readonly { title: string; run(): void }[]): void;
 }
-export interface FilingPills { readonly extension: Extension; open(activePath: string | null, checking?: boolean): boolean }
+/** One note view. The pill lives in its content container, so it survives source, live preview and reading modes. */
+export interface PillSurface {
+  readonly parent: HTMLElement;
+  file(): { readonly path: string } | null;
+  hasFocus(): boolean;
+  focusNote(): void;
+  openNote(path: string): void;
+}
+export interface FilingPills {
+  attach(surface: PillSurface): () => void;
+  refresh(): void;
+  open(activePath: string | null, checking?: boolean): boolean;
+}
 interface ManualDestination { readonly proposalId: string; readonly id: string }
 type Mode = 'hidden' | 'preparing' | 'undecided' | 'ready' | 'moving' | 'done';
 
@@ -20,16 +29,16 @@ const OPEN_STATUSES = new Set(['waiting', 'analyzing', 'ready', 'unassigned', 'f
 const breadcrumb = (path: string) => path.split('/').join(' › ');
 const leaf = (path: string) => path.slice(path.lastIndexOf('/') + 1);
 
-/** A small floating control in the editor corner; it never shifts the note text or takes focus by itself. */
+/** A small floating control in the note's corner; it never shifts the note text or takes focus by itself. */
 export function filingPills(controller: OrganizerController, host: PillHost): FilingPills {
   const pills = new Set<FilingPill>(), destinations = new Map<string, ManualDestination>();
   const shared = { destinations, changed: () => { for (const pill of pills) pill.render(); } };
-  const extension = ViewPlugin.define(view => {
-    const pill = new FilingPill(view, controller, host, shared); pills.add(pill);
-    return { update: (update: ViewUpdate) => pill.update(update), destroy: () => { pill.destroy(); pills.delete(pill); } };
-  });
   return {
-    extension,
+    attach: surface => {
+      const pill = new FilingPill(surface, controller, host, shared); pills.add(pill);
+      return () => { pill.destroy(); pills.delete(pill); };
+    },
+    refresh: () => { for (const pill of pills) pill.render(); },
     open: (activePath, checking = false) => {
       const candidates = [...pills].filter(pill => pill.available());
       const pill = candidates.find(item => item.focused()) ?? candidates.find(item => item.path() === activePath);
@@ -56,16 +65,17 @@ class FilingPill {
   private guardTimer: ReturnType<typeof setTimeout> | undefined;
   private previousFile: unknown;
   private alive = true;
-  constructor(private readonly view: EditorView, private readonly controller: OrganizerController, private readonly hostActions: PillHost, private readonly shared: { destinations: Map<string, ManualDestination>; changed(): void }) {
-    this.host = view.dom.ownerDocument.createElement('div'); this.host.className = 'note-organizer note-organizer-pill-host';
-    this.host.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); this.toggle(false); this.view.focus(); } });
-    view.dom.appendChild(this.host);
+  constructor(private readonly surface: PillSurface, private readonly controller: OrganizerController, private readonly hostActions: PillHost, private readonly shared: { destinations: Map<string, ManualDestination>; changed(): void }) {
+    this.host = surface.parent.ownerDocument.createElement('div'); this.host.className = 'note-organizer note-organizer-pill-host';
+    this.host.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); this.toggle(false); this.surface.focusNote(); } });
+    surface.parent.classList.add('note-organizer-pill-parent'); surface.parent.appendChild(this.host);
     this.previousFile = this.file();
     this.unsubscribe = controller.subscribe(() => this.render()); this.render();
   }
-  private file() { return this.view.state.field(editorInfoField, false)?.file ?? null; }
+  private get doc(): Document { return this.surface.parent.ownerDocument; }
+  private file() { return this.surface.file(); }
   path(): string | null { return this.file()?.path ?? null; }
-  focused(): boolean { return this.view.hasFocus || this.host.contains(this.view.dom.ownerDocument.activeElement); }
+  focused(): boolean { return this.surface.hasFocus() || this.host.contains(this.doc.activeElement); }
   available(): boolean { const mode = this.model().mode; return mode === 'ready' || mode === 'undecided'; }
   private entry(): FilingEntry | undefined { const path = this.path(); return this.controller.state().filing.find(entry => entry.path === path); }
   private target(entry: FilingEntry | undefined): string | null | undefined {
@@ -85,25 +95,22 @@ class FilingPill {
   toggle(open: boolean, focus = false): void {
     if (open === this.opened && !focus) return;
     this.opened = open; this.focusOnReady = open && focus; this.feedback = '';
-    const doc = this.view.dom.ownerDocument;
+    const doc = this.doc;
     if (open) doc.addEventListener('mousedown', this.outside, true); else doc.removeEventListener('mousedown', this.outside, true);
     this.signature = ''; this.render();
   }
-  update(update: ViewUpdate): void {
-    // Filing renames the same file object; only a different file resets the done state.
-    const file = this.file(), switched = file !== this.previousFile;
-    if (switched) { this.previousFile = file; this.lastMove = null; this.plan = null; if (this.opened) this.toggle(false); }
-    if (switched || update.geometryChanged) this.render();
-  }
   render(): void {
     if (!this.alive) return;
+    // Filing renames the same file object; only a different file resets the done state.
+    const file = this.file();
+    if (file !== this.previousFile) { this.previousFile = file; this.lastMove = null; this.plan = null; if (this.opened) { this.opened = false; this.doc.removeEventListener('mousedown', this.outside, true); } this.signature = ''; }
     const model = this.model(), entry = model.entry, target = this.target(entry);
     const folders = this.controller.folders(), folder = folders.find(item => item.id === target);
-    const compact = this.view.dom.clientWidth > 0 && this.view.dom.clientWidth < 520;
+    const width = this.surface.parent.clientWidth, compact = width > 0 && width < 520;
     const signature = JSON.stringify([model.mode, model.record, entry?.proposal?.id, entry?.status, entry?.message, entry?.excerpt, folder?.path, this.opened, this.busy, this.feedback, compact, this.guardUntil > Date.now()]);
     if (signature === this.signature) return;
     this.signature = signature;
-    const active = this.host.contains(this.view.dom.ownerDocument.activeElement) ? (this.view.dom.ownerDocument.activeElement as HTMLElement).dataset.action : undefined;
+    const active = this.host.contains(this.doc.activeElement) ? (this.doc.activeElement as HTMLElement).dataset.action : undefined;
     this.host.replaceChildren(); this.host.hidden = model.mode === 'hidden'; this.host.classList.toggle('is-compact', compact);
     if (model.mode === 'hidden') { if (this.opened) this.toggle(false); return; }
     if (model.mode === 'done') { this.renderDone(model.record!); this.restoreFocus(active); return; }
@@ -176,7 +183,7 @@ class FilingPill {
     try {
       await this.controller.confirmMove(plan);
       this.lastMove = { id: plan.id, to: plan.destination }; this.shared.destinations.delete(plan.source.path);
-      this.opened = false; this.view.dom.ownerDocument.removeEventListener('mousedown', this.outside, true);
+      this.opened = false; this.doc.removeEventListener('mousedown', this.outside, true);
       this.guardUntil = Date.now() + GUARD_MS; clearTimeout(this.guardTimer);
       this.guardTimer = setTimeout(() => { this.signature = ''; this.render(); }, GUARD_MS);
     } catch (error) { this.feedback = errorText(error); }
@@ -193,11 +200,11 @@ class FilingPill {
     const open = this.controller.state().filing.filter(entry => OPEN_STATUSES.has(entry.status) && entry.path !== record.to);
     const next = this.controller.nextInboxNote(record.to);
     if (next) {
-      const forward = button(group, t('pill.next', { count: open.length }) + ' →', () => this.hostActions.openNote(this.view, next));
+      const forward = button(group, t('pill.next', { count: open.length }) + ' →', () => this.surface.openNote(next));
       forward.className = 'note-organizer-link-button'; forward.dataset.action = 'next'; forward.disabled = guarded;
     }
     if (this.feedback) node(group, 'span', this.feedback, 'note-organizer-feedback');
   }
   private restoreFocus(action: string | undefined): void { if (action) this.host.querySelector<HTMLElement>(`[data-action="${action}"]`)?.focus({ preventScroll: true }); }
-  destroy(): void { this.alive = false; this.generation++; clearTimeout(this.guardTimer); this.view.dom.ownerDocument.removeEventListener('mousedown', this.outside, true); this.unsubscribe(); this.host.remove(); }
+  destroy(): void { this.alive = false; this.generation++; clearTimeout(this.guardTimer); this.doc.removeEventListener('mousedown', this.outside, true); this.unsubscribe(); this.host.remove(); if (!this.surface.parent.querySelector('.note-organizer-pill-host')) this.surface.parent.classList.remove('note-organizer-pill-parent'); }
 }

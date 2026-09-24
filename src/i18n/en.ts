@@ -89,7 +89,7 @@ export const en = {
   "settings.autoFilingHelp": "New or edited inbox notes only. Notes move after your confirmation.",
   "settings.autoLinks": "Prepare links while writing",
   "settings.autoLinksHelp": "Sends only nearby edited text and link candidates, including unsaved text. Uses up to 30% of the daily request allowance.",
-  "settings.scope": "Scope and usage",
+  "settings.scope": "Scope",
   "settings.subfolders": "Include inbox subfolders",
   "settings.linkScope": "Link suggestion scope",
   "settings.vault": "This vault",
@@ -162,6 +162,19 @@ export const en = {
   "settings.explorerMarkers": "Mark suggestions in the file explorer",
   "settings.explorerMarkersHelp": "Shows a dot beside inbox notes with a suggestion and a count on the inbox folder in Obsidian's file explorer. Other file browsers get the context menu actions only.",
   "settings.historyEmpty": "No moves yet.",
-  "explorer.count": "{count} filing suggestions"
+  "explorer.count": "{count} filing suggestions",
+  "settings.analyzeOnOpen": "Analyze an inbox note when you open it",
+  "settings.analyzeOnOpenHelp": "When a note has no suggestion yet, opening it sends that note once for analysis. Requires automatic filing suggestions.",
+  "settings.usageHeading": "Usage and content sent",
+  "settings.add": "Add…",
+  "settings.remove": "Remove",
+  "settings.edit": "Edit",
+  "settings.connectedStatus": "Enabled · {requests} of {limit} requests used today",
+  "settings.purposeContainer": "Organizes subfolders only",
+  "settings.purposeNone": "No description",
+  "settings.historyHelp": "{count} recent moves · {review} need review",
+  "settings.historyOpen": "View",
+  "history.review": "Needs review",
+  "history.recent": "Recent"
 } as const;
 export type MessageKey = keyof typeof en;
