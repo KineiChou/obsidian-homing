@@ -92,8 +92,8 @@ it('starts with connection essentials and keeps native advanced headings inside 
   const options = f.container.querySelector('details')!;
   expect(options.open).toBe(false);
   expect(options.querySelector('summary')?.textContent).toBe('More settings');
-  expect(f.container.querySelectorAll('.setting-item-heading')).toHaveLength(4);
-  expect(options.querySelectorAll('.setting-item-heading')).toHaveLength(3);
+  expect(f.container.querySelectorAll('.setting-item-heading')).toHaveLength(6);
+  expect(options.querySelectorAll('.setting-item-heading')).toHaveLength(5);
   expect(f.container.textContent).not.toMatch(/\p{Script=Han}/u);
   expect([...f.container.querySelectorAll('input, select, button')].filter(element => !element.closest('details')).length).toBeGreaterThan(0);
 });
