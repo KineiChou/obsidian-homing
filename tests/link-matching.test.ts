@@ -124,3 +124,41 @@ describe('sentences and explicit search (§6, §8)', () => {
     expect(searchTargets(index, graph, { scorer: scorer('attention'), query: 'attention', sourceNoteId: 99, sourcePath: 'Inbox/a.md', allowed: () => true }).map(item => item.target.noteId)).toEqual([1]);
   });
 });
+
+describe('Unicode and directory matching boundaries', () => {
+  it('keeps emoji clusters whole and preserves original UTF-16 offsets', () => {
+    const index = new MemoryMetadataIndex();
+    index.upsert(target(1, '👍')); index.upsert(target(2, '🇯')); index.upsert(target(3, 'Transformer'));
+    expect(index.match('👍🏽 🇯🇵').matches).toEqual([]);
+    const text = '👍🏽 Ｔｒａｎｓｆｏｒｍｅｒ';
+    const matches = index.match(text, 100).matches;
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toMatchObject({ from: 105, to: 116, text: 'Ｔｒａｎｓｆｏｒｍｅｒ', noteIds: [3] });
+    expect(text.slice(matches[0]!.from - 100, matches[0]!.to - 100)).toBe(matches[0]!.text);
+  });
+  it('uses equivalent word boundaries around halfwidth and fullwidth identifiers', () => {
+    const index = new MemoryMetadataIndex(); index.upsert(target(1, 'Transformer'));
+    for (const text of ['Transformer_model', 'Transformer＿model', 'model_Transformer', 'model＿Transformer', 'Ｔｒａｎｓｆｏｒｍｅｒ＿model']) {
+      expect(index.match(text).matches, text).toEqual([]);
+    }
+    expect(texts(index, 'Transformer，model')).toEqual(['Transformer']);
+  });
+  it('matches the derived phrase after a complete compact calendar date', () => {
+    for (const title of ['20240102_Transformer', '20240102 Transformer', '20240102-Transformer', '2024-01-02 Transformer', '2024年1月2日 Transformer']) {
+      const index = new MemoryMetadataIndex(); index.upsert(target(1, title));
+      expect(deriveTerms(title), title).toContain('Transformer');
+      expect(index.match('Transformer').matches[0]?.kinds).toEqual({ 1: 'derived' });
+    }
+  });
+  it('ranks root siblings above a folder resembling the source filename in both local flows', () => {
+    const index = new MemoryMetadataIndex(), graph = new MemoryLinkGraph();
+    index.upsert(target(1, 'Transformer', { path: 'Transformer.md' }));
+    index.upsert(target(2, 'Transformer', { path: 'Source.m/Transformer.md' }));
+    const candidates = new LocalMentionMatcher(index, graph).scan(request('Transformer', { sourcePath: 'Source.md' }))[0]!.candidates;
+    expect(candidates.map(candidate => candidate.target.noteId)).toEqual([1, 2]);
+    expect(candidates[0]!.score - candidates[1]!.score).toBeCloseTo(.1);
+    const results = searchTargets(index, graph, { query: 'Transformer', scorer: () => 1, sourceNoteId: 99, sourcePath: 'Source.md', allowed: () => true });
+    expect(results.map(item => item.target.noteId)).toEqual([1, 2]);
+    expect(results[0]!.rank - results[1]!.rank).toBeCloseTo(.1);
+  });
+});

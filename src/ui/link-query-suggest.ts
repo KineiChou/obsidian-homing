@@ -1,13 +1,31 @@
-import { EditorSuggest, type App, type Editor, type EditorPosition, type EditorSuggestContext, type EditorSuggestTriggerInfo, type TFile } from 'obsidian';
+import { EditorSuggest, Notice, type App, type Editor, type EditorPosition, type EditorSuggestContext, type EditorSuggestTriggerInfo, type TFile } from 'obsidian';
 import type { OrganizerController } from './types';
 import type { TargetMatch } from '../linking/target-search';
 import { normalize } from '../linking/terms';
 import { node } from './dom';
-import { t } from '../i18n';
+import { errorText, t } from '../i18n';
+import { OrganizerError } from '../core/errors';
 
 export const QUERY_PREFIX = '[[?';
 const MAX_QUERY = 64, VERIFY_DELAY_MS = 600;
-interface QueryItem { readonly match: TargetMatch; readonly recommended: boolean }
+interface ActiveQuery {
+  readonly key: string;
+  readonly editor: Editor;
+  readonly file: TFile;
+  readonly path: string;
+  readonly start: EditorPosition;
+  readonly end: EditorPosition;
+  readonly line: string;
+  readonly query: string;
+  readonly match: string;
+  readonly display: string;
+  readonly settingsKey: string;
+  timer?: ReturnType<typeof setTimeout>;
+  checking: boolean;
+  selected?: number | null;
+}
+interface QueryItem { readonly match: TargetMatch; readonly recommended: boolean; readonly source: ActiveQuery }
+const samePosition = (a: EditorPosition, b: EditorPosition) => a.line === b.line && a.ch === b.ch;
 
 /** `[[?match|display` on one line before the caret; includes an auto-inserted `]]` after it (docs/link-matching.md §8). */
 export function parseLinkQuery(line: string, ch: number): { start: number; end: number; match: string; display: string } | null {
@@ -26,42 +44,55 @@ export function linkAlias(match: string, display: string, title: string): string
 }
 
 export class LinkQuerySuggest extends EditorSuggest<QueryItem> {
-  private recommendation: { key: string; noteId: number | null } | null = null;
-  private pending: { key: string; timer: ReturnType<typeof setTimeout> } | null = null;
+  private active: ActiveQuery | null = null;
   constructor(app: App, private readonly controller: OrganizerController) { super(app); this.limit = 12; }
+  private settingsKey(): string {
+    const settings = this.controller.settings();
+    return JSON.stringify([settings.provider, settings.endpoint, settings.modelId, settings.secretName, settings.verifyOnHover, settings.linkScope, settings.excludedPaths]);
+  }
+  private cancel(): void { if (this.active) clearTimeout(this.active.timer); this.active = null; }
+  close(): void { this.cancel(); super.close(); }
   onTrigger(cursor: EditorPosition, editor: Editor, file: TFile | null): EditorSuggestTriggerInfo | null {
-    if (!file) return null;
-    const query = parseLinkQuery(editor.getLine(cursor.line), cursor.ch);
-    if (!query) return null;
+    const query = file ? parseLinkQuery(editor.getLine(cursor.line), cursor.ch) : null;
+    if (!query) { this.cancel(); return null; }
     return { start: { line: cursor.line, ch: query.start }, end: { line: cursor.line, ch: query.end }, query: editor.getLine(cursor.line).slice(query.start + QUERY_PREFIX.length, cursor.ch) };
   }
   getSuggestions(context: EditorSuggestContext): QueryItem[] {
     const query = parseLinkQuery(QUERY_PREFIX + context.query, QUERY_PREFIX.length + context.query.length);
-    if (!query?.match) return [];
-    const matches = this.controller.searchLinkTargets(query.match, context.file.path);
-    const key = context.file.path + '\u0000' + query.match + '\u0000' + matches.map(item => item.target.noteId).join(',');
-    const recommended = this.recommendation?.key === key ? this.recommendation.noteId : null;
-    this.scheduleCheck(key, context, query.match, matches);
-    const items = matches.map(match => ({ match, recommended: match.target.noteId === recommended }));
+    const line = context.editor.getLine(context.start.line), raw = line.slice(context.start.ch, context.end.ch), expected = QUERY_PREFIX + context.query;
+    if (!query?.match || context.start.line !== context.end.line || (raw !== expected && raw !== expected + ']]')) { this.cancel(); return []; }
+    const matches = this.controller.searchLinkTargets(query.match, context.file.path), settingsKey = this.settingsKey();
+    const key = JSON.stringify([context.file.path, context.start, context.end, line, settingsKey, matches.map(item => [item.target.noteId, item.target.revision, item.target.path])]);
+    if (this.active?.key !== key || this.active.editor !== context.editor || this.active.file !== context.file) {
+      this.cancel();
+      this.active = { key, editor: context.editor, file: context.file, path: context.file.path, start: { ...context.start }, end: { ...context.end }, line, query: context.query, match: query.match, display: query.display, settingsKey, checking: false };
+    }
+    const source = this.active;
+    this.scheduleCheck(source, matches);
+    const items = matches.map(match => ({ match, recommended: match.target.noteId === source.selected, source }));
     return [...items.filter(item => item.recommended), ...items.filter(item => !item.recommended)];
   }
-  /** One model check after typing pauses, only when there is a real choice to make. */
-  private scheduleCheck(key: string, context: EditorSuggestContext, match: string, matches: readonly TargetMatch[]): void {
-    if (this.pending?.key === key || this.recommendation?.key === key) return;
-    if (this.pending) clearTimeout(this.pending.timer);
-    this.pending = null;
-    if (match.length < 2 || matches.length < 2 || !this.controller.settings().verifyOnHover) return;
-    const text = context.editor.getLine(context.start.line), line = text.slice(0, context.start.ch) + match + text.slice(context.end.ch);
-    const timer = setTimeout(() => {
-      void this.controller.verifyLinkQuery(context.file.path, match, line, matches.map(item => item.target)).then(noteId => {
-        if (this.pending?.key !== key) return;
-        this.pending = null; this.recommendation = { key, noteId };
+  private current(source: ActiveQuery): boolean {
+    const context = this.context;
+    return this.active === source && !!context && context.editor === source.editor && context.file === source.file && context.file.path === source.path &&
+      context.query === source.query && samePosition(context.start, source.start) && samePosition(context.end, source.end) &&
+      source.editor.getLine(source.start.line) === source.line && this.settingsKey() === source.settingsKey;
+  }
+  /** The captured object identifies one live query, even when A → B → A reuses the same text. */
+  private scheduleCheck(source: ActiveQuery, matches: readonly TargetMatch[]): void {
+    if (source.checking || source.selected !== undefined || source.match.length < 2 || matches.length < 2 || !this.controller.settings().verifyOnHover) return;
+    source.checking = true;
+    source.timer = setTimeout(() => {
+      if (!this.current(source)) { if (this.active === source) this.cancel(); return; }
+      const line = source.line.slice(0, source.start.ch) + source.match + source.line.slice(source.end.ch);
+      void this.controller.verifyLinkQuery(source.path, source.match, line, matches.map(item => item.target), () => this.current(source)).then(noteId => {
+        if (!this.current(source)) return;
+        source.checking = false; source.selected = noteId;
         // Re-rank the open list; without the internal hook the badge appears on the next keystroke.
         const current = this.context, list = (this as unknown as { suggestions?: { setSuggestions?(items: QueryItem[]): void } }).suggestions;
         if (current && typeof list?.setSuggestions === 'function') list.setSuggestions(this.getSuggestions(current));
-      }, () => { if (this.pending?.key === key) this.pending = null; });
+      }, () => { if (this.active === source) source.checking = false; });
     }, VERIFY_DELAY_MS);
-    this.pending = { key, timer };
   }
   renderSuggestion(item: QueryItem, element: HTMLElement): void {
     element.addClass?.('note-organizer-query-item');
@@ -70,11 +101,13 @@ export class LinkQuerySuggest extends EditorSuggest<QueryItem> {
     node(element, 'div', item.match.target.path.replace(/\.md$/, ''), 'note-organizer-muted');
   }
   selectSuggestion(item: QueryItem): void {
-    const context = this.context;
-    if (!context) return;
-    const query = parseLinkQuery(QUERY_PREFIX + context.query, QUERY_PREFIX.length + context.query.length);
-    const link = this.controller.linkMarkdown(item.match.target.path, context.file.path, linkAlias(query?.match ?? '', query?.display ?? '', item.match.target.title));
-    context.editor.replaceRange(link, context.start, context.end);
+    const source = item.source;
+    try {
+      if (!this.current(source)) throw new OrganizerError('stale', 'error.linkStale');
+      const target = item.match.target;
+      const link = this.controller.linkMarkdown(target, source.path, linkAlias(source.match, source.display, target.title));
+      source.editor.replaceRange(link, source.start, source.end);
+    } catch (error) { new Notice(errorText(error)); }
     this.close();
   }
 }

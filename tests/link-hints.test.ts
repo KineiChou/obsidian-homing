@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { EditorSelection, EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
+import { OrganizerError } from '../src/core/errors';
 import { Emitter } from '../src/core/events';
 import { DEFAULT_SETTINGS, type LinkHintStyle } from '../src/settings';
 import { setLocale } from '../src/i18n';
@@ -19,17 +20,17 @@ function fixture(style: LinkHintStyle = 'underline', parent: HTMLElement = docum
   const changes = new Emitter();
   const mention = (text: string, tier: LinkMention['tier'], ids: number[]): LinkMention => {
     const from = TEXT.indexOf(text);
-    return { from, to: from + text.length, text, tier, candidates: ids.map((id, index) => ({ target: target(id, index ? `${text} (other)` : text), kind: 'title' as const, score: 1 - index / 10, commonness: .5, related: 0 })) };
+    return { verdictKey: text, from, to: from + text.length, text, tier, candidates: ids.map((id, index) => ({ target: target(id, index ? `${text} (other)` : text), kind: 'title' as const, score: 1 - index / 10, commonness: .5, related: 0 })) };
   };
   let mentions = [mention('Transformer', 'confident', [1, 11]), mention('Attention', 'uncertain', [2, 12])];
   const verdicts = new Map<string, number | null>(), pending = new Map<string, ReturnType<typeof deferred<number | null>>>();
   const settings = { ...DEFAULT_SETTINGS, linkHints: style, verifyOnHover };
   const controller = {
     subscribe: (listener: () => void) => changes.subscribe(listener), settings: () => settings,
-    scanLinks: vi.fn((_session: string, ranges: readonly TextRange[]) => mentions.filter(item => ranges.some(range => range.from <= item.from && range.to >= item.to) && verdicts.get(item.text) !== null)
-      .map(item => verdicts.has(item.text) ? { ...item, verified: verdicts.get(item.text)! } : item)),
-    verifyLink: vi.fn((_session: string, item: LinkMention) => { const wait = deferred<number | null>(); pending.set(item.text, wait); return wait.promise.then(selected => { verdicts.set(item.text, selected); changes.emit(); return selected; }); }),
-    linkProposalFor: vi.fn((_session: string, item: LinkMention, noteId?: number): LinkProposal => ({ id: item.text, context, selected: noteId ?? item.candidates[0]!.target.noteId, input: { catalogueEpoch: 1, candidates: item.candidates.map(candidate => candidate.target), anchor: { editorSessionId: 'session', noteId: 99, sourcePath: 'Note.md', documentRevision: 1, from: item.from, to: item.to, originalText: item.text, contextFrom: 0, contextText: TEXT } } })),
+    scanLinks: vi.fn((_session: string, ranges: readonly TextRange[]) => mentions.filter(item => ranges.some(range => range.from <= item.from && range.to >= item.to) && verdicts.get(item.verdictKey) !== null)
+      .map(item => verdicts.has(item.verdictKey) ? { ...item, verified: verdicts.get(item.verdictKey)! } : item)),
+    verifyLink: vi.fn((_session: string, item: LinkMention) => { const wait = deferred<number | null>(); pending.set(item.text, wait); return wait.promise.then(selected => { verdicts.set(item.verdictKey, selected); changes.emit(); return selected; }); }),
+    linkProposalFor: vi.fn((_session: string, item: LinkMention, noteId?: number): LinkProposal => { if (!mentions.some(current => current.verdictKey === item.verdictKey)) throw new OrganizerError('stale', 'error.linkStale'); return ({ id: item.text, context, selected: noteId ?? item.candidates[0]!.target.noteId, input: { catalogueEpoch: 1, candidates: item.candidates.map(candidate => candidate.target), anchor: { editorSessionId: 'session', noteId: 99, sourcePath: 'Note.md', documentRevision: 1, from: item.from, to: item.to, originalText: item.text, contextFrom: 0, contextText: TEXT } } }); }),
     prepareLink: vi.fn((item: LinkProposal, noteId: number): LinkPlan => ({ id: 'plan-' + item.id, proposalId: item.id, anchor: item.input.anchor, target: item.input.candidates.find(candidate => candidate.noteId === noteId)!, replacement: '[[x]]', catalogueEpoch: 1, settingsRevision: 1 })),
     confirmLinks: vi.fn((plans: readonly LinkPlan[]) => { mentions = mentions.filter(item => !plans.some(plan => plan.proposalId === item.text)); changes.emit(); return { appliedPlanIds: plans.map(plan => plan.id), failures: [] }; }),
     dismissLink: vi.fn((item: LinkProposal) => { mentions = mentions.filter(value => value.text !== item.id); changes.emit(); }),
@@ -40,7 +41,7 @@ function fixture(style: LinkHintStyle = 'underline', parent: HTMLElement = docum
   const view = new EditorView({ parent, state: EditorState.create({ doc: TEXT, extensions: [hints.extension] }) });
   cleanup.push(() => view.destroy());
   const hint = (text: string) => [...view.contentDOM.querySelectorAll<HTMLElement>('.note-organizer-link-hint')].find(item => item.textContent === text)!;
-  return { invalidate: () => { mentions = []; changes.emit(); }, pending, view, hints, controller, host, hint,
+  return { changeContext: () => { mentions = mentions.map(item => ({ ...item, verdictKey: item.verdictKey + ':changed' })); changes.emit(); }, invalidate: () => { mentions = []; changes.emit(); }, pending, view, hints, controller, host, hint,
     marks: () => [...view.contentDOM.querySelectorAll('.note-organizer-link-hint')].map(item => [item.textContent, item.classList.contains('is-confident') ? 'confident' : 'uncertain']),
     card: () => parent.ownerDocument.body.querySelector<HTMLElement>('.note-organizer-hint-card'),
     button: (text: string) => [...parent.ownerDocument.body.querySelector('.note-organizer-hint-card')!.querySelectorAll('button')].find(item => item.textContent === text)! };
@@ -149,4 +150,37 @@ it('delayed cursor card does not open after focus leaves pane', async () => {
   focus.mockReturnValue(false); f.view.update([]);
   await vi.advanceTimersByTimeAsync(701);
   expect(f.card()).toBeNull();
+});
+
+it('does not reuse a hover verdict after the sentence changes at the same offsets', async () => {
+  const f = fixture(); await hover(f.hint('Attention'));
+  f.pending.get('Attention')!.resolve(2); await flush();
+  f.view.dispatch({ changes: { from: TEXT.length, insert: ' Different meaning.' } });
+  f.changeContext(); await flush(); await hover(f.hint('Attention'));
+  expect(f.controller.verifyLink).toHaveBeenCalledTimes(2);
+  expect(f.card()?.textContent).toContain('Checking which note');
+  f.pending.get('Attention')!.resolve(12); await flush();
+  f.button('Link').click();
+  expect(f.controller.prepareLink).toHaveBeenCalledWith(expect.objectContaining({ id: 'Attention' }), 12);
+});
+
+it('retries a failed check when the user reopens the card', async () => {
+  const f = fixture(); await hover(f.hint('Attention'));
+  f.pending.get('Attention')!.reject(new Error('temporary failure')); await flush();
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await hover(f.hint('Attention'));
+  expect(f.controller.verifyLink).toHaveBeenCalledTimes(2);
+  f.pending.get('Attention')!.resolve(2); await flush();
+  expect(f.card()?.textContent).toContain('Resources › Attention');
+});
+
+it('ignores an old pending verdict after a new sentence reuses the mention offsets', async () => {
+  const f = fixture(); await hover(f.hint('Attention'));
+  const previous = f.pending.get('Attention')!;
+  f.view.dispatch({ changes: { from: TEXT.length, insert: ' Different meaning.' } });
+  f.changeContext(); await flush(); await hover(f.hint('Attention'));
+  previous.resolve(2); await flush();
+  expect(f.card()?.textContent).toContain('Checking which note');
+  f.pending.get('Attention')!.resolve(12); await flush();
+  expect(f.card()?.textContent).toContain('Resources › Attention (other)');
 });

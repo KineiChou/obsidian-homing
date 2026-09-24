@@ -39,7 +39,7 @@ export function cjkBoundaryChecker(text: string): ((at: number) => boolean) | nu
     return run.boundaries.has(at - start);
   };
 }
-const COMPLEX = /[\p{M}\u200d\ud800-\udfff\ufe0e\ufe0f\r]/u;
+const COMPLEX = /[\p{M}\u200d\ud800-\udfff\u{10000}-\u{10ffff}\ufe0e\ufe0f\r]/u;
 /** Null means every offset is a grapheme boundary (no marks, joiners, surrogates or CRLF). */
 export function graphemeBoundariesIfComplex(text: string): Set<number> | null { return COMPLEX.test(text) ? graphemeBoundaries(text) : null; }
 
@@ -51,6 +51,7 @@ export function graphemeBoundaries(text: string): Set<number> {
 }
 
 const latin = /[\p{Script=Latin}\p{N}_]/u;
+const isLatinWord = (char: string): boolean => latin.test(normalize(char));
 function before(text: string, at: number): string {
   while (at > 0) {
     const last = text.charCodeAt(at - 1);
@@ -63,8 +64,8 @@ function before(text: string, at: number): string {
 export function wordBoundary(text: string, from: number, to: number): boolean {
   const first = String.fromCodePoint(text.codePointAt(from) ?? 0);
   const last = before(text, to);
-  return !(latin.test(first) && latin.test(before(text, from))) &&
-    !(latin.test(last) && latin.test(String.fromCodePoint(text.codePointAt(to) ?? 0)));
+  return !(isLatinWord(first) && isLatinWord(before(text, from))) &&
+    !(isLatinWord(last) && isLatinWord(String.fromCodePoint(text.codePointAt(to) ?? 0)));
 }
 
 export function tokens(text: string): Set<string> {

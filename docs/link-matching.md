@@ -1,6 +1,6 @@
 # 双链匹配：本地分层、链接统计先验与 `[[?` 查询
 
-状态：已实现于 `feat/link-matching`（`src/linking/terms.ts`、`metadata-index.ts`、`link-graph.ts`、`mention-matcher.ts`、`target-search.ts`，宿主 `obsidian/controller.ts`，界面 `ui/link-hints.ts`、`ui/link-query-suggest.ts`）。本文是审查基准：阈值、公式和契约如有改动，须同步修改本文。旧方案比较见 [轻量索引](link-indexing.md)，产品边界见 [双链补齐](link-suggestions.md)。
+状态：已集成于 0.2.3 开发预览（`src/linking/terms.ts`、`metadata-index.ts`、`link-graph.ts`、`mention-matcher.ts`、`target-search.ts`，宿主 `obsidian/controller.ts`，界面 `ui/link-hints.ts`、`ui/link-query-suggest.ts`）。本文是审查基准：阈值、公式和契约如有改动，须同步修改本文。旧方案比较见 [轻量索引](link-indexing.md)，产品边界见 [双链补齐](link-suggestions.md)。
 
 ## 1. 目标与原则
 
@@ -42,7 +42,7 @@
 按顺序处理，每一步产出的非空片段都作为候选，最后去重并去掉与原词相同者：
 
 1. 去掉成对包裹：`《》`、`「」`、`『』`、`""`、`“”`。
-2. 去掉日期或序号前缀：`2024-01-02 `、`20240102_`、`2024年1月2日 `、`01. `、`3、` 等（`^\d{4}[-./年]?\d{1,2}(?:[-./月]\d{1,2}日?)?[\s_-]*`、`^\d{1,3}[.、)）]\s*`）。
+2. 去掉日期或序号前缀：`2024-01-02 `、`20240102_`、`2024年1月2日 `、`01. `、`3、` 等（先匹配 `^\d{8}(?=[\s_-]|$)[\s_-]*`，再匹配 `^\d{4}[-./年]?\d{1,2}(?:[-./月]\d{1,2}日?)?[\s_-]*`、`^\d{1,3}[.、)）]\s*`）。
 3. 反复去掉结尾后缀（可带前置空格、`-`、`_`）：学习笔记、读书笔记、笔记、总结、小结、入门、简介、概述、介绍、教程、notes、note、summary、introduction、intro、overview、tutorial、guide。
 4. 提取括号内外：`注意力机制（Attention）` → `注意力机制`、`Attention`；半角括号同理。
 5. 按分隔符拆分：` - `、` – `、` — `、`：`、`:`、`|`、`｜`、`/`、`、`、`，`、`,`。
@@ -61,7 +61,7 @@
 
 1. 在每个字素边界起点，沿树走到最长的**有效**词条。有效需同时满足：
    - 字素边界：起止都在字素边界上；
-   - 拉丁边界：首字符前、末字符后不能紧邻拉丁字母／数字／下划线（原 `wordBoundary`）；
+   - 拉丁边界：首字符前、末字符后不能紧邻拉丁字母／数字／下划线；相邻字符按相同归一化规则检查，全角下划线也构成边界限制；
    - **中日韩分词边界（新增）**：若首字符是汉字／假名／谚文，则起点必须是 `Intl.Segmenter('zh', { granularity: 'word' })` 的分词边界；若末字符是这类字符，终点也必须是分词边界。分词是懒计算的：只对被查询位置所在的“片段”（以空白、标点或符号为界）分词并缓存，片段两端本身视为边界；运行环境不支持分词时跳过此项检查。
    - 字素边界的快速路径：文本不含组合符号、零宽连接符、代理对、变体选择符或 `\r` 时，每个位置都是字素边界，不再逐字切分。
 2. 同一起点取最长的有效词条；命中后跳过被覆盖的区间（不重叠）。
@@ -113,7 +113,7 @@ score(c)      = w_kind·(0.6 + 0.4·commonness) + 0.25·related + 0.10·folder +
 - 输入：提及文字、所在句子（向前后各至多 240 个单元，截到 `。！？.!?\n`）、源路径、按排序的至多 8 个候选元数据，另加“无需链接”。与现有补链请求的发送范围相同。
 - 调度：`priority: 'manual'`，不受自动请求间隔限制；`linkAllowance: true`，计入“自动补链最多使用每日总额度 30%”的子额度，防止悬停挤占归档额度。同一编辑会话的新悬停请求会取代尚未发送的旧请求。
 - 卡片状态：判断中显示“正在判断…”与候选；模型选定时显示目标与“链接”；模型认为无需链接时保留卡片说明，并允许手动选择候选；失败时显示原因与候选，不缓存失败。`verifyOnHover` 关闭时不请求，直接列出候选供选择。
-- 结论缓存：键为 `normalize(a) | 句子文本 | 提及在句中的偏移 | 候选 id@revision 列表 | linkRevision | modelId`，控制器内 LRU 512 条；错误不缓存。
+- 结论缓存：键为 `源路径 | normalize(a) | 句子文本 | 提及在句中的偏移 | 候选 id@revision 列表 | linkRevision | modelId`，控制器内 LRU 512 条；错误不缓存，重新打开卡片可重试。提及携带该语义键，悬停和确认前重新计算当前句子与候选，正文改变后不能沿用旧位置的结论。
   - 选中某个候选：该提及按“已确认”显示，目标为模型所选；
   - 选择“无需链接”：该句中的这个提及不再显示，直到句子或候选变化。
 
@@ -123,7 +123,7 @@ score(c)      = w_kind·(0.6 + 0.4·commonness) + 0.25·related + 0.10·folder +
 
 ## 7. 实时显示
 
-- 每次正文变化或视口变化时，只扫描可见区域（与 Inline Link Suggestions 相同），不联网。
+- 每次正文变化或视口变化时，只扫描可见区域，不联网。扫描窗口向两端各读取至多 240 个单元作为词边界与句子上下文，只返回完整落在原窗口内的提及，避免把窗口外的单词前缀截掉后误匹配。确认校验使用相同上下文范围。
 - 最后一次编辑后的 1.5 秒内，**与光标相交的提及**不加下划线，其余照常显示，避免在正在输入的词下闪动。
 - 输入法组词期间不显示任何提示。
 - 显示档位 `linkHints` 为“关闭”时不扫描；“行尾标记”时每行最多一个标记，悬停列出该行全部提及。
@@ -134,8 +134,8 @@ score(c)      = w_kind·(0.6 + 0.4·commonness) + 0.25·related + 0.10·folder +
 
 - **触发**：光标所在行、光标之前最后一个未闭合的 `[[?`；查询至多 64 个单元。若光标后紧跟 Obsidian 自动补全的 `]]`，替换范围包含它。
 - **本地候选**：对每篇允许的笔记的标题、别名和派生词，用 Obsidian `prepareFuzzySearch(匹配文字)` 打分，取最好的一项并归一化到 0–1；`rank = fuzzy + 0.25·related + 0.10·folder + 0.2·[n(匹配文字, c) ≥ 1]`；取前 12 个。
-- **模型推荐**：匹配文字 ≥ 2 个字符、候选 ≥ 2 个且 `verifyOnHover` 开启时，停止输入 600 ms 后请求一次（上下文为当前行，查询替换为匹配文字），被选中的候选标为“推荐”并移到首位；不自动插入。
-- **插入**：用户选中后，将 `[start, end)` 替换为 `fileManager.generateMarkdownLink(目标, 源路径, undefined, 别名)`；别名为显示文字；未填写显示文字、且匹配文字不等于目标标题时，用匹配文字作别名。遵守用户的链接格式设置。放弃时正文保留用户键入的文字，不产生任何自定义语法。
+- **模型推荐**：匹配文字 ≥ 2 个字符、候选 ≥ 2 个且 `verifyOnHover` 开启时，停止输入 600 ms 后请求一次（上下文为当前行，查询替换为匹配文字），被选中的候选标为“推荐”并移到首位；不自动插入。查询关闭、清空、切换或设置变化使待发请求失效；返回结果只作用于原查询实例，重新输入相同文字也不能复用旧实例的响应。
+- **插入**：用户选中后，将 `[start, end)` 替换为 `fileManager.generateMarkdownLink(目标, 源路径, undefined, 别名)`；别名为显示文字；未填写显示文字、且匹配文字不等于目标标题时，用匹配文字作别名。插入前再次核对源范围、当前行、查询位置和目标的身份／版本／路径；过期时提示重新选择。遵守用户的链接格式设置。放弃时正文保留用户键入的文字，不产生任何自定义语法。
 - **与原生 `[[` 建议的优先级**：注册后，如能找到内部数组 `app.workspace.editorSuggest.suggests`，则把本建议移到最前；找不到时仍正常注册（可能被原生建议遮挡）。这是对非公开结构的特性检测，失效不影响其他功能。
 
 ## 9. 契约变更
@@ -146,6 +146,7 @@ score(c)      = w_kind·(0.6 + 0.4·commonness) + 0.25·related + 0.10·folder +
 - `EditorSession`：`allowedRangesIn(from, to, parse?)`（整篇扫描时用 `ensureSyntaxTree` 至多等待 200 ms）、`suppressedAt`、`length`、`head`；`EditorSessions.sessionFor(view)`。
 - `VaultAdapter` 构造参数新增可选 `LinkGraph`，在 `metadata()`／`remove()` 中维护统计。
 - `OrganizerController`：`scanLinks`、`verifyLink`、`linkProposalFor`、`ignoreLinkTerm`、`searchLinkTargets`、`verifyLinkQuery`、`linkMarkdown`；移除 `linkSuggestions`。`findLinks` 改为整篇扫描（见 §6）；自动模式改为 `preverify`，只把结论写入缓存，不再填充批量确认列表。
+- `LinkMention.verdictKey: string` 必填；`verifyLink(sessionId, mention)` 用当前语义键校验提及。`verifyLinkQuery(sourcePath, match, line, candidates, isCurrent)` 要求调用方提供实时查询检查；`linkMarkdown(target: LinkTarget, sourcePath, alias?)` 接收完整目标，不能只传路径。
 - `LocalMentionMatcher.inputs()` 保留，改为在 `scan()` 之上构造模型输入，供既有调用与测试使用。
 
 ## 10. 性能预算

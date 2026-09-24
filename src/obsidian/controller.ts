@@ -335,6 +335,7 @@ export class ObsidianOrganizer implements OrganizerController {
   recentMoves() { return this.store.journal.records(); }
   // Link suggestions: local scan, cached model verdicts and user-confirmed plans (docs/link-matching.md §5–8).
   private readonly verdicts = new Map<string, number | null>();
+  private findGeneration = 0;
   private ignoredCache: { source: readonly string[]; terms: ReadonlySet<string> } | undefined;
   private ignoredTerms(): ReadonlySet<string> {
     const source = this.settings().ignoredLinkTerms;
@@ -344,21 +345,25 @@ export class ObsidianOrganizer implements OrganizerController {
   private scanRange(session: NonNullable<ReturnType<EditorSessions['get']>>, from: number, to: number, parse = false): LocalMention[] {
     const path = session.path, noteId = path ? this.vault.id(path) : null;
     if (!path || noteId === null) return [];
-    return new LocalMentionMatcher(this.index, this.graph).scan({ sourceNoteId: noteId, sourcePath: path, text: session.read(from, to), offset: from, allowedRanges: session.allowedRangesIn(from, to, parse),
-      linkedNoteIds: this.vault.linkedTargets(path), ignoredTerms: this.ignoredTerms(), allowed: target => this.vault.allowed(target.path) }).filter(mention => !session.suppressedAt(mention.from, mention.to, mention.text));
+    // Match and rank with the same bounded sentence context used by linkInput.
+    // Viewport edges must not become word boundaries or remove lexical ranking signals.
+    const start = Math.max(0, from - 240), end = Math.min(session.length, to + 240);
+    return new LocalMentionMatcher(this.index, this.graph).scan({ sourceNoteId: noteId, sourcePath: path, text: session.read(start, end), offset: start, allowedRanges: session.allowedRangesIn(start, end, parse),
+      linkedNoteIds: this.vault.linkedTargets(path), ignoredTerms: this.ignoredTerms(), allowed: target => this.vault.allowed(target.path) }).filter(mention => mention.from >= from && mention.to <= to && !session.suppressedAt(mention.from, mention.to, mention.text));
   }
   private linkInput(session: NonNullable<ReturnType<EditorSessions['get']>>, mention: LocalMention): LinkInput | null {
     const path = session.path, noteId = path ? this.vault.id(path) : null, revision = session.currentRevision;
-    if (!path || noteId === null || revision === null) return null;
+    if (!path || noteId === null || revision === null || !this.vault.linkSource(path) || !session.allows(mention.from, mention.to) || session.read(mention.from, mention.to) !== mention.text) return null;
     const start = Math.max(0, mention.from - 240), end = Math.min(session.length, mention.to + 240), text = session.read(start, end);
-    const range = session.allowedRangesIn(start, end).find(item => item.from <= mention.from && item.to >= mention.to) ?? { from: start, to: end };
+    const range = session.allowedRangesIn(start, end).find(item => item.from <= mention.from && item.to >= mention.to);
+    if (!range) return null;
     const local = sentenceRange(text, mention.from - start, mention.to - start, range.from - start, range.to - start);
     return { catalogueEpoch: this.index.epoch, candidates: mention.candidates.map(candidate => candidate.target),
       anchor: { editorSessionId: session.id, noteId, sourcePath: path, documentRevision: revision, from: mention.from, to: mention.to, originalText: mention.text, contextFrom: start + local.from, contextText: text.slice(local.from, local.to) } };
   }
   private verdictKey(input: LinkInput): string {
     const anchor = input.anchor;
-    return [normalize(anchor.originalText), anchor.contextText, anchor.from - anchor.contextFrom, input.candidates.map(target => target.noteId + '@' + target.revision).join(','), this.linkRevision, this.settings().modelId].join('\u0000');
+    return [anchor.sourcePath, normalize(anchor.originalText), anchor.contextText, anchor.from - anchor.contextFrom, input.candidates.map(target => target.noteId + '@' + target.revision).join(','), this.linkRevision, this.settings().modelId].join('\u0000');
   }
   private remember(key: string, selected: number | null): void {
     this.verdicts.delete(key); this.verdicts.set(key, selected);
@@ -374,21 +379,32 @@ export class ObsidianOrganizer implements OrganizerController {
       if (to <= range.from) break;
       budget -= to - range.from;
       for (const mention of this.scanRange(session, range.from, to)) {
-        if (mention.tier === 'confident' || !this.verdicts.size) { result.push(mention); continue; }
-        const input = this.linkInput(session, mention), verdict = input ? this.verdicts.get(this.verdictKey(input)) : undefined;
+        const input = this.linkInput(session, mention);
+        if (!input) continue;
+        const verdictKey = this.verdictKey(input), verdict = this.verdicts.get(verdictKey);
+        const current = { ...mention, verdictKey };
         // A model "no link" verdict hides the mention for this sentence.
         if (verdict === null) continue;
-        result.push(verdict === undefined ? mention : { ...mention, verified: verdict });
+        result.push(verdict === undefined ? current : { ...current, verified: verdict });
       }
     }
     return result;
   }
-  async verifyLink(sessionId: string, mention: LocalMention): Promise<number | null> {
-    const session = this.editors.get(sessionId), input = session ? this.linkInput(session, mention) : null;
-    if (!input) throw new OrganizerError('stale', 'error.linkStale');
+  private currentMentionInput(sessionId: string, mention: LinkMention): LinkInput {
+    const session = this.editors.get(sessionId);
+    const current = session && this.scanRange(session, mention.from, mention.to).find(item => item.from === mention.from && item.to === mention.to && item.text === mention.text);
+    const input = session && current ? this.linkInput(session, current) : null;
+    if (!input || this.verdictKey(input) !== mention.verdictKey) throw new OrganizerError('stale', 'error.linkStale');
+    return input;
+  }
+  async verifyLink(sessionId: string, mention: LinkMention): Promise<number | null> {
+    const input = this.currentMentionInput(sessionId, mention);
+    if (!this.settings().verifyOnHover) throw new OrganizerError('stale', 'error.linkStale');
     const key = this.verdictKey(input);
     if (this.verdicts.has(key)) return this.verdicts.get(key)!;
-    const [proposal] = await this.recommender.propose([input], this.context('link'), { key: 'verify:' + sessionId, priority: 'manual', automatic: false, linkAllowance: true, isCurrent: this.linkScope(input) });
+    const current = this.linkScope(input);
+    const [proposal] = await this.recommender.propose([input], this.context('link'), { key: 'verify:' + sessionId, priority: 'manual', automatic: false, linkAllowance: true, isCurrent: () => this.settings().verifyOnHover && current() });
+    if (!this.settings().verifyOnHover || !current()) throw new OrganizerError('stale', 'error.linkStale');
     const selected = proposal?.selected ?? null;
     this.remember(key, selected); this.events.emit();
     return selected;
@@ -396,11 +412,11 @@ export class ObsidianOrganizer implements OrganizerController {
   private linkScope(input: LinkInput, automatic = false): () => boolean {
     const requestRevision = this.requestRevision, linkRevision = this.linkRevision, epoch = this.index.epoch;
     return () => !this.disposed && this.requestRevision === requestRevision && this.linkRevision === linkRevision && this.index.epoch === epoch && (!automatic || (this.enabled() && this.settings().autoLinks)) &&
-      input.candidates.every(target => this.index.get(target.noteId)?.revision === target.revision);
+      this.vault.linkSource(input.anchor.sourcePath) && input.candidates.every(target => this.currentTarget(target)) &&
+      (input.anchor.editorSessionId === 'query' || (this.editors.get(input.anchor.editorSessionId)?.currentRevision === input.anchor.documentRevision && this.editors.get(input.anchor.editorSessionId)?.path === input.anchor.sourcePath));
   }
   linkProposalFor(sessionId: string, mention: LinkMention, targetId?: number): LinkProposal {
-    const session = this.editors.get(sessionId), input = session ? this.linkInput(session, mention) : null;
-    if (!input) throw new OrganizerError('stale', 'error.linkStale');
+    const input = this.currentMentionInput(sessionId, mention);
     return { id: crypto.randomUUID(), input, context: this.context('link'), selected: targetId ?? mention.verified ?? mention.candidates[0]?.target.noteId ?? null };
   }
   ignoreLinkTerm(term: string): Promise<void> {
@@ -422,6 +438,7 @@ export class ObsidianOrganizer implements OrganizerController {
     const scopes = inputs.map(input => this.linkScope(input, true));
     try {
       const proposals = await this.recommender.propose(inputs, this.context('link'), { key: 'link:' + id, priority: 'link', automatic: true, isCurrent: () => scopes.every(current => current()) });
+      if (!scopes.every(current => current())) return;
       proposals.forEach((proposal, index) => this.remember(this.verdictKey(inputs[index]!), proposal.selected));
       if (session.currentRevision === snapshot.revision) session.acknowledgeAnalysis(snapshot);
       this.events.emit();
@@ -433,34 +450,53 @@ export class ObsidianOrganizer implements OrganizerController {
     if (!session?.path) throw new OrganizerError('missing', 'host.openEditor');
     if (!this.ready || !this.vault.linkSource(session.path)) { this.message = 'links.empty'; this.events.emit(); return; }
     session.clearSuppressions();
+    const generation = ++this.findGeneration, revision = session.currentRevision, sourcePath = session.path;
+    const requestRevision = this.requestRevision, linkRevision = this.linkRevision, epoch = this.index.epoch;
     const mentions = this.scanRange(session, 0, Math.min(session.length, 200000), true);
+    const isCurrent = () => !this.disposed && generation === this.findGeneration && session.currentRevision === revision && session.path === sourcePath && this.activePath === sourcePath &&
+      this.requestRevision === requestRevision && this.linkRevision === linkRevision && this.index.epoch === epoch && this.vault.linkSource(sourcePath);
     const head = session.head, proposals: LinkProposal[] = [];
-    for (const mention of mentions.filter(item => item.tier === 'confident')) proposals.push(this.linkProposalFor(session.id, mention));
+    for (const mention of mentions.filter(item => item.tier === 'confident')) {
+      const input = this.linkInput(session, mention);
+      if (input) proposals.push(this.linkProposalFor(session.id, { ...mention, verdictKey: this.verdictKey(input) }));
+    }
     const uncertain = mentions.filter(item => item.tier === 'uncertain').sort((a, b) => Math.abs(a.from - head) - Math.abs(b.from - head)).slice(0, 24);
     const inputs = uncertain.flatMap(mention => { const input = this.linkInput(session, mention); return input ? [input] : []; });
     if (inputs.length) {
       try {
         const scopes = inputs.map(input => this.linkScope(input));
-        const verified = await this.recommender.propose(inputs, this.context('link'), { key: 'link:' + session.id, priority: 'manual', automatic: false, isCurrent: () => scopes.every(current => current()) });
+        const verified = await this.recommender.propose(inputs, this.context('link'), { key: 'link:' + session.id, priority: 'manual', automatic: false, isCurrent: () => isCurrent() && scopes.every(current => current()) });
+        if (!isCurrent() || !scopes.every(current => current())) throw new OrganizerError('stale', 'error.linkStale');
         verified.forEach((proposal, index) => this.remember(this.verdictKey(inputs[index]!), proposal.selected));
         proposals.push(...verified.filter(proposal => proposal.selected !== null));
       } catch (error) { this.report(error); if (!proposals.length) throw error; }
     }
+    if (!isCurrent()) throw new OrganizerError('stale', 'error.linkStale');
     this.links = [...this.links.filter(existing => existing.input.anchor.editorSessionId !== session.id), ...proposals.sort((a, b) => a.input.anchor.from - b.input.anchor.from)];
     this.message = proposals.length ? null : 'links.empty'; this.events.emit();
   }
   searchLinkTargets(query: string, sourcePath: string) {
+    if (!this.ready || !this.vault.file(sourcePath) || !this.vault.linkSource(sourcePath)) return [];
     const fuzzy = prepareFuzzySearch(query.trim());
     return searchTargets(this.index, this.graph, { scorer: text => fuzzy(text)?.score ?? null, query, sourceNoteId: this.vault.id(sourcePath), sourcePath, allowed: target => this.vault.allowed(target.path) });
   }
-  async verifyLinkQuery(sourcePath: string, match: string, line: string, candidates: readonly LinkTarget[]): Promise<number | null> {
+  async verifyLinkQuery(sourcePath: string, match: string, line: string, candidates: readonly LinkTarget[], isCurrent: () => boolean): Promise<number | null> {
+    const current = () => isCurrent() && this.settings().verifyOnHover && this.vault.linkSource(sourcePath) && candidates.every(target => this.currentTarget(target));
+    if (!current()) throw new OrganizerError('stale', 'error.linkStale');
     const at = line.indexOf(match), noteId = this.vault.id(sourcePath) ?? -1;
     const input: LinkInput = { catalogueEpoch: this.index.epoch, candidates: candidates.slice(0, 8), anchor: { editorSessionId: 'query', noteId, sourcePath, documentRevision: 0, from: Math.max(0, at), to: Math.max(0, at) + match.length, originalText: match, contextFrom: 0, contextText: at >= 0 ? line : match } };
-    const [proposal] = await this.recommender.propose([input], this.context('link'), { key: 'query:' + sourcePath, priority: 'manual', automatic: false, linkAllowance: true, isCurrent: this.linkScope(input) });
+    const scope = this.linkScope(input);
+    const [proposal] = await this.recommender.propose([input], this.context('link'), { key: 'query:' + sourcePath, priority: 'manual', automatic: false, linkAllowance: true, isCurrent: () => current() && scope() });
+    if (!current() || !scope()) throw new OrganizerError('stale', 'error.linkStale');
     return proposal?.selected ?? null;
   }
-  linkMarkdown(targetPath: string, sourcePath: string, alias?: string): string {
-    const file = this.vault.file(targetPath);
+  private currentTarget(target: LinkTarget): boolean {
+    const current = this.index.get(target.noteId);
+    return current?.revision === target.revision && current.path === target.path && this.vault.allowed(target.path);
+  }
+  linkMarkdown(target: LinkTarget, sourcePath: string, alias?: string): string {
+    if (!this.vault.linkSource(sourcePath) || !this.currentTarget(target)) throw new OrganizerError('stale', 'error.linkTargetChanged');
+    const file = this.vault.file(target.path);
     if (!file) throw new OrganizerError('missing', 'error.linkTargetChanged');
     return this.plugin.app.fileManager.generateMarkdownLink(file, sourcePath, undefined, alias);
   }

@@ -32,7 +32,7 @@ export function isShortTerm(term: string): boolean {
 const STOP = new Set(['笔记', '学习笔记', '读书笔记', '总结', '小结', '入门', '简介', '概述', '介绍', '教程', '草稿', '随笔', '日记', '周报', '月报', '会议', '记录', '索引', '目录',
   'notes', 'note', 'summary', 'intro', 'introduction', 'overview', 'tutorial', 'guide', 'draft', 'todo', 'index', 'readme', 'misc']);
 const WRAPPERS: readonly [string, string][] = [['《', '》'], ['「', '」'], ['『', '』'], ['"', '"'], ['“', '”']];
-const PREFIX = [/^\d{4}[-./年]?\d{1,2}(?:[-./月]\d{1,2}日?)?[\s_-]*/u, /^\d{1,3}[.、)）]\s*/u];
+const PREFIX = [/^\d{8}(?=[\s_-]|$)[\s_-]*/u, /^\d{4}[-./年]?\d{1,2}(?:[-./月]\d{1,2}日?)?[\s_-]*/u, /^\d{1,3}[.、)）]\s*/u];
 const SUFFIX = /[\s_-]*(?:学习笔记|读书笔记|笔记|总结|小结|入门|简介|概述|介绍|教程|notes|note|summary|introduction|intro|overview|tutorial|guide)$/iu;
 const SEPARATORS = /\s[-–—]\s|[：:|｜/、，,]/u;
 
