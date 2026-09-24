@@ -85,6 +85,7 @@ export const zh = {
   "settings.checking": "正在检查连接…",
   "settings.connected": "连接正常。",
   "settings.automation": "建议",
+  "settings.options": "更多设置",
   "settings.autoFiling": "自动准备归档建议",
   "settings.autoFilingHelp": "为新增或修改的收件箱笔记准备建议，确认后才会移动。",
   "settings.autoLinks": "写作时准备链接建议",

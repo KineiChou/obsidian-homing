@@ -83,6 +83,7 @@ export const en = {
   "settings.checking": "Checking connection…",
   "settings.connected": "Connected.",
   "settings.automation": "Suggestions",
+  "settings.options": "More settings",
   "settings.autoFiling": "Prepare filing suggestions automatically",
   "settings.autoFilingHelp": "New or edited inbox notes only. Notes move after your confirmation.",
   "settings.autoLinks": "Prepare links while writing",
