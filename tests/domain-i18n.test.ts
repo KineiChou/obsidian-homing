@@ -5,6 +5,7 @@ import { parseSettings } from '../src/settings';
 import { parseChoiceResponse } from '../src/jev/response-parser';
 import { errorText, setLocale, translateMessage } from '../src/i18n';
 import { errorEn } from '../src/i18n/error-en';
+import { en } from '../src/i18n/en';
 import { errorZh } from '../src/i18n/error-zh';
 import { batch } from './helpers';
 
@@ -24,6 +25,15 @@ describe('domain message keys', () => {
       expect(value).not.toMatch(/\p{Script=Han}/u);
     }
     expect(translateMessage('User note 个人笔记')).toBe('User note 个人笔记');
+  });
+  it('keeps the complete English UI dictionary free of untranslated Han text', () => {
+    setLocale('en');
+    for (const [key, value] of Object.entries(en)) {
+      expect(value, key).not.toMatch(/\p{Script=Han}/u);
+      expect(translateMessage(key), key).toBe(value);
+    }
+    // User-provided paths are data, not untranslated interface copy.
+    expect(translateMessage('organizer.moveTo', { path: '资料/研究.md' })).toBe('Move to 资料/研究.md');
   });
   it('preserves parameter values such as user paths', () => {
     const error = new OrganizerError('stale', 'organizer.moveTo', 0, { path: '资料/研究' });

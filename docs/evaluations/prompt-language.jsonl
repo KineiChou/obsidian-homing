@@ -1,0 +1,17 @@
+{"caseId":"filing_zh","domain":"filing","contentLanguage":"zh","instructionLanguage":"zh","model":"jev-1.13.0","expected":"f1","selected":"f1","hit":true,"inputTokens":649,"durationMs":699}
+{"caseId":"filing_zh","domain":"filing","contentLanguage":"zh","instructionLanguage":"en","model":"jev-1.13.0","expected":"f1","selected":"f1","hit":true,"inputTokens":613,"durationMs":1096}
+{"caseId":"filing_en","domain":"filing","contentLanguage":"en","instructionLanguage":"en","model":"jev-1.13.0","expected":"f2","selected":"f2","hit":true,"inputTokens":592,"durationMs":290}
+{"caseId":"filing_en","domain":"filing","contentLanguage":"en","instructionLanguage":"zh","model":"jev-1.13.0","expected":"f2","selected":"f2","hit":true,"inputTokens":628,"durationMs":325}
+{"caseId":"filing_mixed","domain":"filing","contentLanguage":"mixed","instructionLanguage":"zh","model":"jev-1.13.0","expected":"f3","selected":"f3","hit":true,"inputTokens":662,"durationMs":203}
+{"caseId":"filing_mixed","domain":"filing","contentLanguage":"mixed","instructionLanguage":"en","model":"jev-1.13.0","expected":"f3","selected":"f3","hit":true,"inputTokens":626,"durationMs":209}
+{"caseId":"filing_abstain","domain":"filing","contentLanguage":"zh","instructionLanguage":"en","model":"jev-1.13.0","expected":"unassigned","selected":"unassigned","hit":true,"inputTokens":535,"durationMs":312}
+{"caseId":"filing_abstain","domain":"filing","contentLanguage":"zh","instructionLanguage":"zh","model":"jev-1.13.0","expected":"unassigned","selected":"unassigned","hit":true,"inputTokens":571,"durationMs":331}
+{"caseId":"link_zh","domain":"link","contentLanguage":"zh","instructionLanguage":"zh","model":"jev-1.13.0","expected":"n1","selected":"n1","hit":true,"inputTokens":576,"durationMs":523}
+{"caseId":"link_zh","domain":"link","contentLanguage":"zh","instructionLanguage":"en","model":"jev-1.13.0","expected":"n1","selected":"n1","hit":true,"inputTokens":557,"durationMs":285}
+{"caseId":"link_en","domain":"link","contentLanguage":"en","instructionLanguage":"en","model":"jev-1.13.0","expected":"n2","selected":"n2","hit":true,"inputTokens":532,"durationMs":264}
+{"caseId":"link_en","domain":"link","contentLanguage":"en","instructionLanguage":"zh","model":"jev-1.13.0","expected":"n2","selected":"n2","hit":true,"inputTokens":551,"durationMs":210}
+{"caseId":"link_mixed","domain":"link","contentLanguage":"mixed","instructionLanguage":"zh","model":"jev-1.13.0","expected":"n2","selected":"n2","hit":true,"inputTokens":563,"durationMs":283}
+{"caseId":"link_mixed","domain":"link","contentLanguage":"mixed","instructionLanguage":"en","model":"jev-1.13.0","expected":"n2","selected":"n2","hit":true,"inputTokens":544,"durationMs":225}
+{"caseId":"link_abstain","domain":"link","contentLanguage":"en","instructionLanguage":"en","model":"jev-1.13.0","expected":"unassigned","selected":"unassigned","hit":true,"inputTokens":526,"durationMs":206}
+{"caseId":"link_abstain","domain":"link","contentLanguage":"en","instructionLanguage":"zh","model":"jev-1.13.0","expected":"unassigned","selected":"unassigned","hit":true,"inputTokens":545,"durationMs":290}
+{"type":"summary","complete":true,"arms":[{"instructionLanguage":"zh","completed":8,"hits":8,"pairedCases":8,"pairedHits":8,"knownInputTokens":4745,"unknownTokenRequests":0,"meanDurationMs":358},{"instructionLanguage":"en","completed":8,"hits":8,"pairedCases":8,"pairedHits":8,"knownInputTokens":4525,"unknownTokenRequests":0,"meanDurationMs":361}]}

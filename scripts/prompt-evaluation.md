@@ -1,6 +1,6 @@
 # Instructions language comparison
 
-This is an offline-prepared, small paired evaluation for review item #12. It does not replace production Chinese instructions. Candidate English instructions and fixed synthetic fixtures live in `prompt-evaluation-cases.mjs`. It imports the production `JevClient` through an in-memory esbuild bundle when running live.
+This is a small paired evaluation for review item #12. The live comparison is complete; see the [results and decision](../docs/prompt-language-evaluation.md). It does not replace production Chinese instructions. Candidate English instructions and fixed synthetic fixtures live in `prompt-evaluation-cases.mjs`. It imports the production `JevClient` through an in-memory esbuild bundle when running live.
 
 ## Run
 
@@ -12,7 +12,7 @@ node scripts/prompt-evaluation.mjs --dry-run
 node scripts/prompt-evaluation.mjs --live > prompt-evaluation-results.jsonl
 ```
 
-For the live command, paste a Jev key into stdin and press Enter. Terminal input is not echoed; no credential is written to disk. Avoid putting keys in command arguments, shell history, or committed files. Diagnostics go to stderr; stdout contains JSONL measurement records and a final summary. Noninteractive callers may supply the key through stdin. This script has not itself established provider quality: an operator must run the live comparison and review its results.
+For the live command, paste a Jev key into stdin and press Enter. Terminal input is not echoed; no credential is written to disk. Avoid putting keys in command arguments, shell history, or committed files. Diagnostics go to stderr; stdout contains JSONL measurement records and a final summary. Noninteractive callers may supply the key through stdin. The recorded run covers these fixed synthetic cases only; repeat runs incur another set of requests.
 
 ## Controlled comparison
 
@@ -22,4 +22,4 @@ There are at most **16 serial Jev requests**, with one question per request and 
 
 Records contain case/domain/content language, instruction language, model, expected and selected target IDs, hit, reported input tokens (null means unavailable), and local elapsed milliseconds. They exclude keys, body text, prompts, full requests/responses and provider error messages. Failed requests use only a fixed error marker. Summaries report completed requests, hits, completed-pair hits, known token totals, missing-token counts and mean latency. Compare paired hits when a run is incomplete; token totals exclude unknown values. Latency includes transport and parsing and may reflect transient service conditions.
 
-These eight hand-authored examples are a bounded diagnostic, not a statistically reliable quality benchmark. Inspect individual paired outcomes and abstention behavior alongside cost and latency; do not replace production prompts solely because English uses fewer tokens or wins a single run. A successful process exit indicates completed requests, not perfect accuracy. Errors exit nonzero. Logs and live result files are operator artifacts and should not be committed automatically.
+These eight hand-authored examples are a bounded diagnostic, not a statistically reliable quality benchmark. Inspect individual paired outcomes and abstention behavior alongside cost and latency; do not replace production prompts solely because English uses fewer tokens or wins a single run. A successful process exit indicates completed requests, not perfect accuracy. Errors exit nonzero. Logs and live result files are operator artifacts and should not be committed automatically. The reviewed, metadata-only result of the completed comparison is stored in [prompt-language.jsonl](../docs/evaluations/prompt-language.jsonl).
