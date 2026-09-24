@@ -30,7 +30,10 @@
 @media (prefers-reduced-motion: reduce) { .note-organizer-pill { transition: none; } }
 
 /* Link hints: a faint dotted underline, never a color change of the text. */
-.note-organizer-link-hint { text-decoration: underline dotted var(--text-faint); text-decoration-thickness: 1px; text-underline-offset: 3px; cursor: pointer; }
+.note-organizer-link-hint { text-decoration-line: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; cursor: pointer; }
+/* Clear matches: a thin solid line. Ambiguous ones: a fainter dotted line until checked. */
+.note-organizer-link-hint.is-confident { text-decoration-style: solid; text-decoration-color: var(--text-faint); }
+.note-organizer-link-hint.is-uncertain { text-decoration-style: dotted; text-decoration-color: var(--background-modifier-border-hover, var(--text-faint)); }
 .note-organizer-link-hint:hover { text-decoration-color: var(--text-accent); }
 .note-organizer-link-marker { display: inline-flex; vertical-align: middle; margin-inline-start: var(--size-4-1); color: var(--text-faint); cursor: pointer; }
 .note-organizer-link-marker svg { width: 12px; height: 12px; }
@@ -41,6 +44,11 @@
 .note-organizer-hint-title svg { width: 14px; height: 14px; color: var(--text-muted); }
 .note-organizer-hint-row .note-organizer-muted { font-size: var(--font-ui-smaller); overflow-wrap: anywhere; }
 .note-organizer-hint-row .note-organizer-actions { margin-top: var(--size-4-2); }
+.note-organizer-hint-choices { display: flex; flex-wrap: wrap; gap: var(--size-4-1); margin-top: var(--size-4-2); }
+.note-organizer-hint-never { display: block; margin-top: var(--size-4-2); color: var(--text-faint); font-size: var(--font-ui-smaller); }
+.note-organizer-query-title { display: flex; align-items: center; gap: var(--size-4-2); }
+.note-organizer-query-badge { padding: 0 var(--size-4-1); border-radius: var(--radius-s); background: var(--interactive-accent); color: var(--text-on-accent); font-size: var(--font-ui-smaller); }
+.note-organizer-query-item .note-organizer-muted { font-size: var(--font-ui-smaller); }
 
 /* Inbox and batch modals */
 .note-organizer-batch-list { max-height: 55vh; overflow: auto; margin-inline: calc(var(--size-4-2) * -1); padding-inline: var(--size-4-2); }

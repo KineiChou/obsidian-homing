@@ -1,6 +1,6 @@
 import { editorInfoField } from 'obsidian';
 import { ViewPlugin, type EditorView, type ViewUpdate } from '@codemirror/view';
-import { syntaxTree } from '@codemirror/language';
+import { ensureSyntaxTree, syntaxTree } from '@codemirror/language';
 import type { Extension } from '@codemirror/state';
 import type { EditorChange, EditorPort, EditorSnapshot, LinkInsertion, TextAnchor, TextRange } from '../linking/types';
 import { OrganizerError } from '../core/errors';
@@ -117,8 +117,13 @@ export class NoteEditorSession implements EditorPort {
     const end = snapshot.contextFrom + snapshot.text.length;
     this.dirty = this.dirty.filter(range => range.to < snapshot.contextFrom || range.from > end);
   }
-  private allowedRanges(from: number, to: number): TextRange[] {
-    const tree = syntaxTree(this.view.state);
+  get length(): number { return this.view.state.doc.length; }
+  get head(): number { return this.view.state.selection.main.head; }
+  /** Text ranges where a link may be suggested; `parse` waits briefly for a complete syntax tree (whole-note scans). */
+  allowedRangesIn(from: number, to: number, parse = false): TextRange[] { return this.allowedRanges(from, to, parse); }
+  suppressedAt(from: number, to: number, text: string): boolean { return this.suppressions.some(record => record.from === from && record.to === to && record.text === text); }
+  private allowedRanges(from: number, to: number, parse = false): TextRange[] {
+    const tree = (parse ? ensureSyntaxTree(this.view.state, to, 200) : null) ?? syntaxTree(this.view.state);
     if (tree.length < to) return [];
     const blocked: TextRange[] = [];
     tree.iterate({ from, to, enter(node) {

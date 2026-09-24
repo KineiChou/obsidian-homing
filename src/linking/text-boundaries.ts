@@ -1,5 +1,47 @@
-/** ASCII folding preserves the original UTF-16 offsets. */
-export function fold(text: string): string { return text.replace(/[A-Z]/g, char => char.toLowerCase()); }
+import { normalize } from './terms';
+
+/** Case and width folding that preserves the original UTF-16 offsets. */
+export function fold(text: string): string { return normalize(text); }
+
+let words: Intl.Segmenter | null | undefined;
+function wordSegmenter(): Intl.Segmenter | null {
+  if (words === undefined) { try { words = new Intl.Segmenter('zh', { granularity: 'word' }); } catch { words = null; } }
+  return words;
+}
+/**
+ * Word boundaries for Chinese, Japanese and Korean text. Returns null when the
+ * runtime has no word segmenter, in which case callers skip the CJK check.
+ */
+export function cjkWordBoundaries(text: string): Set<number> | null {
+  const segmenter = wordSegmenter();
+  if (!segmenter) return null;
+  const boundaries = new Set<number>([0, text.length]);
+  for (const part of segmenter.segment(text)) { boundaries.add(part.index); boundaries.add(part.index + part.segment.length); }
+  return boundaries;
+}
+const RUN_BREAK = /[\s\p{P}\p{S}]/u;
+/**
+ * Lazily segments only the run (between spaces or punctuation) around a queried
+ * offset, so a sparse scan does not segment the whole viewport.
+ */
+export function cjkBoundaryChecker(text: string): ((at: number) => boolean) | null {
+  if (!wordSegmenter()) return null;
+  const runs = new Map<number, { end: number; boundaries: Set<number> }>();
+  return at => {
+    if (at <= 0 || at >= text.length || RUN_BREAK.test(text[at - 1]!) || RUN_BREAK.test(text[at]!)) return true;
+    let start = at; while (start > 0 && !RUN_BREAK.test(text[start - 1]!)) start--;
+    let run = runs.get(start);
+    if (!run) {
+      let end = at; while (end < text.length && !RUN_BREAK.test(text[end]!)) end++;
+      const boundaries = cjkWordBoundaries(text.slice(start, end))!;
+      run = { end, boundaries }; runs.set(start, run);
+    }
+    return run.boundaries.has(at - start);
+  };
+}
+const COMPLEX = /[\p{M}\u200d\ud800-\udfff\ufe0e\ufe0f\r]/u;
+/** Null means every offset is a grapheme boundary (no marks, joiners, surrogates or CRLF). */
+export function graphemeBoundariesIfComplex(text: string): Set<number> | null { return COMPLEX.test(text) ? graphemeBoundaries(text) : null; }
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 export function graphemeBoundaries(text: string): Set<number> {

@@ -55,6 +55,7 @@ export function renderSettings(container: HTMLElement, app: App, controller: Org
   new Setting(options).setName(t('settings.automation')).setHeading();
   new Setting(options).setName(t('settings.autoFiling')).setDesc(t('settings.autoFilingHelp')).addToggle(toggle => toggle.setValue(configuration.autoFiling).onChange(value => change({ autoFiling: value })));
   new Setting(options).setName(t('settings.analyzeOnOpen')).setDesc(t('settings.analyzeOnOpenHelp')).addToggle(toggle => toggle.setValue(configuration.analyzeOnOpen).onChange(value => change({ analyzeOnOpen: value })));
+  new Setting(options).setName(t('settings.verifyOnHover')).setDesc(t('settings.verifyOnHoverHelp')).addToggle(toggle => toggle.setValue(configuration.verifyOnHover).onChange(value => change({ verifyOnHover: value })));
   new Setting(options).setName(t('settings.autoLinks')).setDesc(t('settings.autoLinksHelp')).addToggle(toggle => toggle.setValue(configuration.autoLinks).onChange(value => change({ autoLinks: value })));
 
   new Setting(options).setName(t('settings.display')).setHeading();
@@ -67,6 +68,7 @@ export function renderSettings(container: HTMLElement, app: App, controller: Org
   pathList(options, app, controller, save, { name: t('settings.excluded'), description: t('settings.excludedHelp'), key: 'excludedPaths', candidates: () => [...controller.allFolders(), ...app.vault.getMarkdownFiles().map(file => file.path)] });
   pathList(options, app, controller, save, { name: t('settings.destinations'), description: t('settings.destinationsHelp'), key: 'excludedDestinations', candidates: () => controller.allFolders().filter(path => path !== controller.settings().inbox) });
   folderRules(options, app, controller, save);
+  ignoredTerms(options, controller, save);
 
   new Setting(options).setName(t('settings.usageHeading')).setHeading();
   const today = controller.usage();
@@ -94,6 +96,15 @@ function pathList(container: HTMLElement, app: App, controller: OrganizerControl
   setting.addButton(control => control.setButtonText(t('settings.add')).onClick(() => new TargetPicker(app, options.candidates().filter(path => !controller.settings()[options.key].includes(path)), path => path, path => {
     void save({ [options.key]: [...controller.settings()[options.key], path] }).then(render).catch(() => undefined);
   }).open()));
+  render();
+}
+function ignoredTerms(container: HTMLElement, controller: OrganizerController, save: Save): void {
+  new Setting(container).setName(t('settings.ignoredTerms')).setDesc(t('settings.ignoredTermsHelp'));
+  const list = node(container, 'div', undefined, 'note-organizer-setting-list');
+  const render = () => {
+    list.replaceChildren();
+    for (const term of controller.settings().ignoredLinkTerms) new Setting(list).setName(term).addExtraButton(control => control.setIcon('x').setTooltip(t('settings.remove')).onClick(() => { void save({ ignoredLinkTerms: controller.settings().ignoredLinkTerms.filter(item => item !== term) }).then(render).catch(() => undefined); }));
+  };
   render();
 }
 function folderRules(container: HTMLElement, app: App, controller: OrganizerController, save: Save): void {

@@ -17,6 +17,7 @@ vi.mock('../src/ui/filing-pill', () => ({ filingPills: vi.fn(() => ({ attach: ()
 vi.mock('../src/ui/link-hints', () => ({ linkHints: vi.fn(() => ({ extension: [], acceptAtCursor: () => false })) }));
 vi.mock('../src/ui/target-picker', () => ({ DestinationPicker: class {}, TargetPicker: class {} }));
 vi.mock('../src/obsidian/explorer-integration', () => ({ registerExplorerIntegration: vi.fn() }));
+vi.mock('../src/ui/link-query-suggest', () => ({ LinkQuerySuggest: class {} }));
 
 beforeEach(() => vi.clearAllMocks());
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
@@ -40,7 +41,7 @@ it('closes organizer tabs restored from earlier versions once the layout is read
   const workspace = { getLeavesOfType: vi.fn((type: string) => type === 'note-organizer-inbox' ? [retired[0]] : type === 'note-organizer-review' ? [retired[1]] : []), onLayoutReady: (ready: () => void) => ready(), on: () => ({}) };
   const plugin = new NoteOrganizerPlugin({ workspace } as unknown as App, {} as PluginManifest);
   Object.assign(plugin, {
-    registerView: host.registerView, addSettingTab: vi.fn(), registerEvent: vi.fn(), registerEditorExtension: vi.fn(), register: vi.fn(), registerDomEvent: vi.fn(), addCommand: vi.fn(),
+    registerView: host.registerView, addSettingTab: vi.fn(), registerEvent: vi.fn(), registerEditorSuggest: vi.fn(), registerEditorExtension: vi.fn(), register: vi.fn(), registerDomEvent: vi.fn(), addCommand: vi.fn(),
     addStatusBarItem: () => { const element = document.createElement('div'); return Object.assign(element, { createEl: (tag: string) => Object.assign(element.appendChild(document.createElement(tag)), { createSpan: () => element.appendChild(document.createElement('span')) }) }); },
   });
   await plugin.onload();

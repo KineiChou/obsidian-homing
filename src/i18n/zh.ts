@@ -89,8 +89,8 @@ export const zh = {
   "settings.localKeyHelp": "本机 Ollama 可留空；远程服务需要选择已保存的 API 密钥。",
   "settings.autoFiling": "自动准备归档建议",
   "settings.autoFilingHelp": "为新增或修改的收件箱笔记准备建议，确认后才会移动。",
-  "settings.autoLinks": "写作时准备链接建议",
-  "settings.autoLinksHelp": "发送编辑位置附近的文字和候选链接，可能包含未保存内容。最多使用每日请求额度的 30%。",
+  "settings.autoLinks": "写作时预先判断有歧义的链接",
+  "settings.autoLinksHelp": "停顿后在后台判断编辑处附近有歧义的提示。会发送这些句子和候选信息，可能包含未保存内容。最多使用每日请求额度的 30%。",
   "settings.scope": "范围",
   "settings.subfolders": "包含收件箱子目录",
   "settings.linkScope": "链接分析范围",
@@ -177,5 +177,14 @@ export const zh = {
   "settings.historyHelp": "最近 {count} 次移动 · {review} 条待核对",
   "settings.historyOpen": "查看",
   "history.review": "待核对",
-  "history.recent": "最近"
+  "history.recent": "最近",
+  "hint.checking": "正在判断这里指向哪篇笔记…",
+  "hint.noLink": "这里可能不需要链接，仍可手动选择。",
+  "hint.choose": "选择这里指向的笔记。",
+  "hint.never": "不再提示“{term}”",
+  "query.recommended": "推荐",
+  "settings.verifyOnHover": "按需判断有歧义的链接",
+  "settings.verifyOnHoverHelp": "悬停在有歧义的提示上，或在 [[? 中停止输入时，发送所在句子和候选笔记信息请求一次推荐。明确的匹配从不发请求。",
+  "settings.ignoredTerms": "不作为链接提示的词",
+  "settings.ignoredTermsHelp": "在提示卡片中点“不再提示”即可添加。"
 } satisfies Record<MessageKey, string>;
