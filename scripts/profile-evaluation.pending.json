@@ -1,0 +1,11 @@
+{
+  "status": "not-run",
+  "corpus": "folder-profiles-synthetic-2026-09-24",
+  "model": "jev-1.13.0",
+  "folderCount": 300,
+  "sampleCount": 7,
+  "conditions": ["profiles-off", "profiles-on"],
+  "maxRequests": 40,
+  "resultsPath": "/private/tmp/profile-evaluation-results.json",
+  "reason": "Live execution is pending. No model quality results have been measured."
+}
