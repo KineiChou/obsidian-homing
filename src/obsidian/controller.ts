@@ -345,8 +345,9 @@ export class ObsidianOrganizer implements OrganizerController {
   private scanRange(session: NonNullable<ReturnType<EditorSessions['get']>>, from: number, to: number, parse = false): LocalMention[] {
     const path = session.path, noteId = path ? this.vault.id(path) : null;
     if (!path || noteId === null) return [];
-    // Include a complete code point on both sides so viewport edges are not word boundaries.
-    const start = Math.max(0, from - 2), end = Math.min(session.length, to + 2);
+    // Match and rank with the same bounded sentence context used by linkInput.
+    // Viewport edges must not become word boundaries or remove lexical ranking signals.
+    const start = Math.max(0, from - 240), end = Math.min(session.length, to + 240);
     return new LocalMentionMatcher(this.index, this.graph).scan({ sourceNoteId: noteId, sourcePath: path, text: session.read(start, end), offset: start, allowedRanges: session.allowedRangesIn(start, end, parse),
       linkedNoteIds: this.vault.linkedTargets(path), ignoredTerms: this.ignoredTerms(), allowed: target => this.vault.allowed(target.path) }).filter(mention => mention.from >= from && mention.to <= to && !session.suppressedAt(mention.from, mention.to, mention.text));
   }

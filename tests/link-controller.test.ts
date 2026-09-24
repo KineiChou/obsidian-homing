@@ -162,3 +162,23 @@ it('rejects a queued query when the UI query generation changes', async () => {
   current = false; release(); await first; await rejected;
   expect(requestUrl).toHaveBeenCalledTimes(1);
 });
+
+it('keeps sentence-ranked candidates stable across viewport widths and proposal revalidation', async () => {
+  const f = await fixture('Power distribution relies on Transformer.');
+  f.controller.graph.clear();
+  const mention = f.scan()[0]!;
+  expect(mention.candidates[0]!.target.path).toBe('Power/Transformer.md');
+  const narrow = f.controller.scanLinks(f.session, [{ from: mention.from, to: mention.to }])[0]!;
+  expect(narrow.candidates.map(item => item.target.path)).toEqual(mention.candidates.map(item => item.target.path));
+  expect(narrow.verdictKey).toBe(mention.verdictKey);
+  expect(f.controller.linkProposalFor(f.session, mention).selected).toBe(mention.candidates[0]!.target.noteId);
+  reply(ids => ids.find(id => id !== 'unassigned')!);
+  await expect(f.controller.verifyLink(f.session, mention)).resolves.toBe(mention.candidates[0]!.target.noteId);
+});
+
+it('preserves Chinese word boundaries when the viewport isolates a title inside a longer word', async () => {
+  const f = await fixture('这位研究生正在写论文。');
+  f.controller.index.upsert({ noteId: 999, path: 'Topics/研究.md', title: '研究', aliases: [], tags: [], description: '', revision: 1 });
+  expect(f.scan()).toEqual([]);
+  expect(f.controller.scanLinks(f.session, [{ from: 2, to: 4 }])).toEqual([]);
+});
