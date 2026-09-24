@@ -4,7 +4,7 @@
 
 A desktop Obsidian plugin that suggests folders for inbox notes and internal links while you write. Review suggestions before applying them: moving notes and inserting links always require your confirmation.
 
-This is a **0.2.1 development preview**, not a community-store release. Note Organizer is a working name; the final name, author attribution and license remain undecided. Requires **Obsidian 1.11.4+ on desktop**. Mobile support is not claimed.
+This is a **0.2.2 development preview**, not a community-store release. Note Organizer is a working name; the final name, author attribution and license remain undecided. Requires **Obsidian 1.11.4+ on desktop**. Mobile support is not claimed.
 
 ## Get started
 

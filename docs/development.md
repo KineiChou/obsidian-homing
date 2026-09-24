@@ -48,7 +48,9 @@ Node 22.12+；使用 npm 11 验证 `npx --yes npm@11 ci --ignore-scripts`，再�
 
 ## UI 入口与端口
 
-主要交互位于编辑器内，不使用侧栏或整理标签页；旧 `note-organizer-inbox`／`note-organizer-review` 视图注册为 `RetiredReviewView`，恢复时自动关闭。`filingPills(controller, host)` 是 CM6 ViewPlugin，把胶囊挂在 `view.dom` 并绝对定位，面板打开后才调用 `prepareMove`；同一路径共享手选目标，目标绑定建议 ID，文件对象变化才清除撤销状态。`linkHints(controller, host)` 用 Decoration 显示下划线或行尾标记，编辑后 `QUIET_MS` 内隐藏，控制器事件在微任务中以 StateEffect 刷新，悬停卡片挂在 `document.body`。`InboxModal` 逐篇准备并确认批量归档，`AnalysisModal` 在发送前确认待分析路径，`LinkSuggestionsModal` 固定源会话并批量确认链接。`registerExplorerIntegration` 注册原生 `file-menu`／`files-menu` 与 Notebook Navigator 1.2+ 菜单 API，并在检测到原生文件栏内部条目表时写入 `data-note-organizer` 标记。控制器为界面提供 `linkSuggestions()`、`nextInboxNote()` 与 `attachmentCount()`；`EditorSessions.sessionFor(view)` 让补链提示找到所属编辑会话。
+主要交互位于编辑器内，不使用侧栏或整理标签页；旧 `note-organizer-inbox`／`note-organizer-review` 视图注册为 `RetiredReviewView`，恢复时自动关闭。`filingPills(controller, host)` 是 CM6 ViewPlugin，把胶囊挂在 `view.dom` 并绝对定位，面板打开后才调用 `prepareMove`；同一路径共享手选目标，目标绑定建议 ID，文件对象变化才清除撤销状态。`linkHints(controller, host)` 用 Decoration 显示下划线或行尾标记，编辑后 `QUIET_MS` 内隐藏，控制器事件在微任务中以 StateEffect 刷新，悬停卡片挂在 `document.body`。`InboxModal` 在批量确认时固定目标与 `SourceVersion`，逐篇准备后与确认快照比较，再执行计划；无建议笔记的手选目标先准备以捕获源版本，处理期间禁用改选并忽略旧选择器回调。`AnalysisModal` 在发送前确认待分析路径，`LinkSuggestionsModal` 固定源会话并批量确认链接。`registerExplorerIntegration` 注册原生 `file-menu`／`files-menu` 与 Notebook Navigator 1.2+ 菜单 API，并在检测到原生文件栏内部条目表时写入 `data-note-organizer` 标记。控制器为界面提供 `linkSuggestions()`、`nextInboxNote()` 与 `attachmentCount()`；`EditorSessions.sessionFor(view)` 让补链提示找到所属编辑会话。
+
+胶囊准备失败只更新当前面板的错误，不通过重新渲染触发新准备；撤销失败仍保留可重试入口。链接卡片在焦点变化时保留操作节点；DOM 检查兼容其他窗口，延迟光标提示再次核对焦点。Notebook Navigator 菜单按 API 对象身份重绑，卸载后迟到的布局回调不得注册。
 
 胶囊归档成功后提供撤销与同窗格的下一篇，两者有 400 ms 防连击；分值接近时可显示两个改选目录，不展示模型概率。计划准备均有异步代次检查，重渲染按签名跳过并恢复操作焦点。任何入口都不能凭模型响应直接写入；实际交互以 [交互文档](interaction-design.md) 为准。
 
