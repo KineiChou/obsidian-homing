@@ -1,3 +1,4 @@
+import { parentPath } from '../core/paths';
 import type { EditorSnapshot, LinkGraph, LinkInput, LinkTarget, LocalMention, MentionMatcher, MetadataIndex, RankedCandidate, ScanRequest, TermKind, TextRange } from './types';
 import { graphemeBoundaries, tokens, wordBoundary } from './text-boundaries';
 import { KIND_WEIGHT, isShortTerm, normalize } from './terms';
@@ -12,10 +13,9 @@ function overlap(context: ReadonlySet<string>, text: string): number {
   for (const token of tokens(text)) if (context.has(token)) count++;
   return count;
 }
-const parent = (path: string) => path.slice(0, path.lastIndexOf('/'));
 const top = (path: string) => path.split('/')[0] ?? '';
 function folderScore(source: string, target: string): number {
-  if (parent(source) === parent(target)) return 1;
+  if (parentPath(source) === parentPath(target)) return 1;
   return top(source) === top(target) && source.includes('/') && target.includes('/') ? .5 : 0;
 }
 

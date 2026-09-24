@@ -1,3 +1,4 @@
+import { parentPath } from '../core/paths';
 import type { LinkGraph, LinkTarget, MetadataIndex, TermKind } from './types';
 import { normalize } from './terms';
 
@@ -12,7 +13,6 @@ export interface TargetQuery {
   allowed(target: LinkTarget): boolean;
   readonly limit?: number;
 }
-const parent = (path: string) => path.slice(0, path.lastIndexOf('/'));
 
 /** Explicit `[[?` search over titles, aliases and derived terms (docs/link-matching.md §8). */
 export function searchTargets(index: MetadataIndex, graph: LinkGraph, query: TargetQuery): TargetMatch[] {
@@ -33,7 +33,7 @@ export function searchTargets(index: MetadataIndex, graph: LinkGraph, query: Tar
   return hits.map(hit => {
     const fuzzy = high === low ? 1 : (hit.fuzzy - low) / (high - low);
     const related = query.sourceNoteId === null ? 0 : graph.relatedness(query.sourceNoteId, hit.target.noteId);
-    const folder = parent(query.sourcePath) === parent(hit.target.path) ? 1 : 0;
+    const folder = parentPath(query.sourcePath) === parentPath(hit.target.path) ? 1 : 0;
     return { target: hit.target, kind: hit.kind, matched: hit.matched, rank: fuzzy + .25 * related + .1 * folder + ((linked.get(hit.target.noteId) ?? 0) >= 1 ? .2 : 0) };
   }).sort((a, b) => b.rank - a.rank || a.target.path.localeCompare(b.target.path)).slice(0, query.limit ?? 12);
 }
