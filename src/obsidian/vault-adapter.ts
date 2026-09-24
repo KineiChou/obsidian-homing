@@ -1,5 +1,5 @@
 import { App, TFile, TFolder, getFrontMatterInfo, parseYaml, parseLinktext, parseFrontMatterAliases, parseFrontMatterTags } from 'obsidian';
-import type { MetadataIndex, LinkTarget } from '../linking/types';
+import type { LinkGraph, MetadataIndex, LinkTarget } from '../linking/types';
 import type { NoteSnapshot, SourceVersion } from '../filing/types';
 import { contentHash, excluded, inInbox, safePath, within } from '../core/paths';
 import { OrganizerError } from '../core/errors';
@@ -11,7 +11,7 @@ export class VaultAdapter {
   private readonly ids = new WeakMap<TFile, number>();
   private readonly files = new Map<number, TFile>();
   private readonly revisions = new Map<number, number>();
-  constructor(readonly app: App, private readonly index: MetadataIndex, private readonly settings: () => OrganizerSettings) {}
+  constructor(readonly app: App, private readonly index: MetadataIndex, private readonly settings: () => OrganizerSettings, private readonly graph?: LinkGraph) {}
   identity(file: TFile): number {
     let id = this.ids.get(file);
     if (id === undefined) { id = ++this.sequence; this.ids.set(file, id); this.files.set(id, file); this.revisions.set(id, 0); }
@@ -29,8 +29,9 @@ export class VaultAdapter {
   touch(file: TFile): void { const id = this.identity(file); this.revisions.set(id, (this.revisions.get(id) ?? 0) + 1); }
   metadata(file: TFile): void {
     const id = this.identity(file);
-    if (file.extension !== 'md' || !this.allowed(file.path)) { this.index.remove(id); return; }
+    if (file.extension !== 'md' || !this.allowed(file.path)) { this.index.remove(id); this.graph?.removeNote(id); return; }
     const cache = this.app.metadataCache.getFileCache(file);
+    this.graph?.replaceSource(id, this.outgoing(file, cache?.links ?? []));
     const description: unknown = cache?.frontmatter?.description;
     const previous = this.index.get(id);
     const value: LinkTarget = { noteId: id, path: file.path, title: file.basename, aliases: (parseFrontMatterAliases(cache?.frontmatter) ?? []).slice(0, 32), tags: (parseFrontMatterTags(cache?.frontmatter) ?? []).slice(0, 8), description: typeof description === 'string' ? description.slice(0, 160) : '', revision: this.revisions.get(id) ?? 0 };
@@ -39,7 +40,18 @@ export class VaultAdapter {
     }
     this.index.upsert({ ...value, revision: this.revisions.get(id) ?? 0 });
   }
-  remove(file: TFile): void { const id = this.ids.get(file); if (id !== undefined) { this.index.remove(id); this.files.delete(id); this.revisions.delete(id); } }
+  /** Resolved outgoing wiki/Markdown links with their visible text, for link statistics (docs/link-matching.md §4). */
+  private outgoing(file: TFile, links: readonly { link: string; displayText?: string }[]): { targetId: number; anchor: string }[] {
+    const result: { targetId: number; anchor: string }[] = [];
+    for (const link of links) {
+      const path = parseLinktext(link.link).path;
+      const target = path ? this.app.metadataCache.getFirstLinkpathDest(path, file.path) : null;
+      if (!target || target === file || target.extension !== 'md' || !this.allowed(target.path)) continue;
+      result.push({ targetId: this.identity(target), anchor: link.displayText?.trim() || target.basename });
+    }
+    return result;
+  }
+  remove(file: TFile): void { const id = this.ids.get(file); if (id !== undefined) { this.index.remove(id); this.graph?.removeNote(id); this.files.delete(id); this.revisions.delete(id); } }
   removeUnder(path: string): void { for (const file of this.files.values()) if (within(file.path, path)) this.remove(file); }
   allFolders(): string[] { return this.app.vault.getAllFolders(false).map(folder => folder.path).filter(path => this.allowed(path)); }
   async source(path: string): Promise<SourceVersion | null> {

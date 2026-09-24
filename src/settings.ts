@@ -31,13 +31,15 @@ export interface OrganizerSettings {
   readonly linkHints: LinkHintStyle;
   readonly explorerMarkers: boolean;
   readonly analyzeOnOpen: boolean;
+  readonly verifyOnHover: boolean;
+  readonly ignoredLinkTerms: readonly string[];
 }
 export type LinkHintStyle = 'underline' | 'marker' | 'off';
 export const DEFAULT_SETTINGS: OrganizerSettings = {
   provider: 'jev', endpoint: PROVIDER_DEFAULTS.jev.endpoint, longNoteStrategy: 'excerpt', folderProfilesEnabled: false,
   inbox: '', includeSubfolders: true, secretName: '', autoFiling: true, autoLinks: false,
   linkScope: 'vault', excludedPaths: [], excludedDestinations: [], folderRules: [],
-  dailyRequestLimit: 100, modelId: 'jev-1.13.0', linkHints: 'underline', explorerMarkers: true, analyzeOnOpen: true,
+  dailyRequestLimit: 100, modelId: 'jev-1.13.0', linkHints: 'underline', explorerMarkers: true, analyzeOnOpen: true, verifyOnHover: true, ignoredLinkTerms: [],
 };
 
 export function parseSettings(value: unknown): OrganizerSettings {
@@ -68,6 +70,8 @@ export function parseSettings(value: unknown): OrganizerSettings {
   if (!modelId.trim() || modelId.length > 200 || (provider === 'jev' && modelId !== DEFAULT_SETTINGS.modelId)) return fail();
   const endpoint = validateEndpoint(string('endpoint', PROVIDER_DEFAULTS[provider].endpoint));
   if (provider === 'jev' && endpoint !== PROVIDER_DEFAULTS.jev.endpoint) return fail();
+  const ignored = v.ignoredLinkTerms ?? [];
+  if (!Array.isArray(ignored) || ignored.length > 1000 || ignored.some(term => typeof term !== 'string' || !term.trim() || term.length > 64)) return fail();
   const linkHints = v.linkHints ?? 'underline';
   if (linkHints !== 'underline' && linkHints !== 'marker' && linkHints !== 'off') return fail();
   const longNoteStrategy = v.longNoteStrategy ?? 'excerpt';
@@ -78,6 +82,7 @@ export function parseSettings(value: unknown): OrganizerSettings {
     includeSubfolders: boolean('includeSubfolders', true), autoFiling: boolean('autoFiling', true), autoLinks: boolean('autoLinks', false),
     linkScope, excludedPaths: paths('excludedPaths'), excludedDestinations: paths('excludedDestinations'), folderRules,
     dailyRequestLimit: Number(limit), modelId, linkHints, explorerMarkers: boolean('explorerMarkers', true), analyzeOnOpen: boolean('analyzeOnOpen', true),
+    verifyOnHover: boolean('verifyOnHover', true), ignoredLinkTerms: [...new Set((ignored as string[]).map(term => term.trim()))],
   };
 }
 function fail(): never { throw new OrganizerError('invalid-settings', 'error.settingsInvalid'); }

@@ -8,6 +8,7 @@ import { AnalysisModal } from './ui/analysis-modal';
 import { InboxModal } from './ui/inbox-modal';
 import { filingPills, type FilingPills } from './ui/filing-pill';
 import { linkHints } from './ui/link-hints';
+import { LinkQuerySuggest } from './ui/link-query-suggest';
 import { DestinationPicker, TargetPicker } from './ui/target-picker';
 import { errorText, setLocale, t } from './i18n';
 
@@ -39,9 +40,14 @@ export default class NoteOrganizerPlugin extends Plugin {
     });
     const hints = linkHints(organizer, {
       sessionId: view => organizer.editors.sessionFor(view)?.id,
-      chooseTarget: (proposal, choose) => new TargetPicker(this.app, proposal.input.candidates, target => target.path, target => choose(target.noteId)).open(),
+      chooseTarget: (candidates, choose) => new TargetPicker(this.app, candidates, target => target.path, target => choose(target.noteId)).open(),
     });
     this.registerEditorExtension(hints.extension);
+    const query = new LinkQuerySuggest(this.app, organizer);
+    this.registerEditorSuggest(query);
+    // `[[?` starts like a native `[[` link; put this suggest first when the (internal) list is available.
+    const suggests = (this.app.workspace as unknown as { editorSuggest?: { suggests?: unknown[] } }).editorSuggest?.suggests;
+    if (Array.isArray(suggests) && suggests.indexOf(query) > 0) { suggests.splice(suggests.indexOf(query), 1); suggests.unshift(query); }
     this.attachPills(pills);
     registerExplorerIntegration(this, organizer, { eligible: path => organizer.vault.eligible(path), organize, analyze, chooseDestination });
 

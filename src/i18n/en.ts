@@ -87,8 +87,8 @@ export const en = {
   "settings.localKeyHelp": "Leave blank for Ollama on this computer. Remote services require a saved API key.",
   "settings.autoFiling": "Prepare filing suggestions automatically",
   "settings.autoFilingHelp": "New or edited inbox notes only. Notes move after your confirmation.",
-  "settings.autoLinks": "Prepare links while writing",
-  "settings.autoLinksHelp": "Sends only nearby edited text and link candidates, including unsaved text. Uses up to 30% of the daily request allowance.",
+  "settings.autoLinks": "Check ambiguous links while writing",
+  "settings.autoLinksHelp": "After you pause, ambiguous suggestions near your edits are checked in the background. Sends those sentences and candidate details, including unsaved text. Uses up to 30% of the daily request allowance.",
   "settings.scope": "Scope",
   "settings.subfolders": "Include inbox subfolders",
   "settings.linkScope": "Link suggestion scope",
@@ -175,6 +175,15 @@ export const en = {
   "settings.historyHelp": "{count} recent moves · {review} need review",
   "settings.historyOpen": "View",
   "history.review": "Needs review",
-  "history.recent": "Recent"
+  "history.recent": "Recent",
+  "hint.checking": "Checking which note this refers to…",
+  "hint.noLink": "This may not need a link. You can still pick a note.",
+  "hint.choose": "Choose the note this refers to.",
+  "hint.never": "Never suggest “{term}”",
+  "query.recommended": "Recommended",
+  "settings.verifyOnHover": "Check ambiguous links on request",
+  "settings.verifyOnHoverHelp": "When you hover an ambiguous suggestion or pause while typing [[?, the sentence and candidate note details are sent once for a recommendation. Clear matches never make a request.",
+  "settings.ignoredTerms": "Words never suggested as links",
+  "settings.ignoredTermsHelp": "Added from a suggestion card with “Never suggest”."
 } as const;
 export type MessageKey = keyof typeof en;

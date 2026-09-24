@@ -120,7 +120,7 @@ export class SharedDecisionScheduler implements DecisionScheduler {
       assertCurrent(job.scope);
       const limit = this.dailyLimit();
       if (!Number.isSafeInteger(limit) || limit < 1) throw new OrganizerError('budget', 'error.budgetExhausted');
-      try { await this.usage.reserve(limit, job.scope.automatic && job.scope.priority === 'link' ? { automaticLinkLimit: Math.floor(limit * 0.3) } : undefined); reserved = true; }
+      try { await this.usage.reserve(limit, (job.scope.automatic && job.scope.priority === 'link') || job.scope.linkAllowance ? { automaticLinkLimit: Math.floor(limit * 0.3) } : undefined); reserved = true; }
       catch (error) { throw error instanceof OrganizerError ? error : new OrganizerError('storage', 'error.budgetStorage'); }
       assertCurrent(job.scope);
       if (job.settled || this.disposed || this.paused) throw new OrganizerError('cancelled', 'error.analysisStopped');
