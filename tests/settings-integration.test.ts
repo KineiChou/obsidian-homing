@@ -6,16 +6,16 @@ import { ObsidianOrganizer } from '../src/obsidian/controller';
 import { DEFAULT_SETTINGS } from '../src/settings';
 import { FakeApp, Plugin, requestUrl, Setting, TFolder } from './fakes/obsidian';
 
-import { setLocale } from '../src/i18n';
+import { setLocale, t } from '../src/i18n';
 beforeEach(() => setLocale('zh'));
 const disposals: (() => void)[] = [];
 afterEach(() => { for (const dispose of disposals.splice(0)) dispose(); document.body.replaceChildren(); vi.restoreAllMocks(); });
 
-async function settingsFixture() {
+async function settingsFixture(inbox = 'Inbox') {
   const app = new FakeApp();
   for (const path of ['Inbox', 'Reading', 'Research']) app.files.set(path, new TFolder(path));
   const plugin = new Plugin(app);
-  plugin.data = { schemaVersion: 1, settings: { ...DEFAULT_SETTINGS, inbox: 'Inbox', secretName: 'key' }, filingQueue: [], moveJournal: [] };
+  plugin.data = { schemaVersion: 1, settings: { ...DEFAULT_SETTINGS, inbox, secretName: 'key' }, filingQueue: [], moveJournal: [] };
   const controller = new ObsidianOrganizer(plugin as unknown as ObsidianPlugin);
   await controller.initialize();
   disposals.push(() => { controller.dispose(); plugin.unload(); });
@@ -84,4 +84,25 @@ it('waits for a pending connection setting before sending the connection test', 
   const save = f.controller.saveSettings({ provider: 'openai-compatible', endpoint: 'http://localhost:19436/v1', modelId: 'test-model', secretName: '' });
   await f.controller.testConnection(); await save;
   expect(requestUrl).toHaveBeenCalledWith(expect.objectContaining({ url: 'http://localhost:19436/v1/chat/completions' }));
+});
+
+it('starts with connection essentials and keeps native advanced headings inside a closed section', async () => {
+  setLocale('en');
+  const f = await settingsFixture('');
+  const options = f.container.querySelector('details')!;
+  expect(options.open).toBe(false);
+  expect(options.querySelector('summary')?.textContent).toBe('More settings');
+  expect(f.container.querySelectorAll('.setting-item-heading')).toHaveLength(4);
+  expect(options.querySelectorAll('.setting-item-heading')).toHaveLength(3);
+  expect(f.container.textContent).not.toMatch(/\p{Script=Han}/u);
+  expect([...f.container.querySelectorAll('input, select, button')].filter(element => !element.closest('details')).length).toBeGreaterThan(0);
+});
+
+it('opens advanced settings after a successful first connection', async () => {
+  setLocale('en');
+  const f = await settingsFixture('');
+  await f.controller.saveSettings({ inbox: 'Inbox', provider: 'openai-compatible', endpoint: 'http://localhost:19436/v1', modelId: 'test-model', secretName: '' });
+  requestUrl.mockResolvedValue({ status: 200, headers: {}, json: { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ answers: { connection: { choice: 'learning', ranking: ['learning', 'none'] } } }) } }] } });
+  [...f.container.querySelectorAll('button')].find(button => button.textContent === t(f.controller.enabled() ? 'settings.check' : 'settings.enable'))!.click();
+  await vi.waitFor(() => expect(f.container.querySelector('details')?.open).toBe(true));
 });

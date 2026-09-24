@@ -1,10 +1,11 @@
 import { OrganizerError } from './core/errors';
 import { safePath } from './core/paths';
 
-export type DecisionProvider = 'jev' | 'openai-compatible' | 'anthropic';
+export type DecisionProvider = 'jev' | 'openai-compatible' | 'anthropic' | 'ollama';
 export const PROVIDER_DEFAULTS = {
   jev: { endpoint: 'https://api.typesafe.ai/v1', modelId: 'jev-1.13.0', name: 'TypeSafe Jev' },
   'openai-compatible': { endpoint: 'https://api.openai.com/v1', modelId: 'gpt-4.1-mini', name: 'OpenAI compatible' },
+  ollama: { endpoint: 'http://127.0.0.1:11434/v1', modelId: 'qwen3:1.7b', name: 'Ollama' },
   anthropic: { endpoint: 'https://api.anthropic.com/v1', modelId: 'claude-sonnet-4-6', name: 'Anthropic' },
 } as const;
 export function validateEndpoint(endpoint: string): string {
@@ -58,7 +59,7 @@ export function parseSettings(value: unknown): OrganizerSettings {
   const linkScope = v.linkScope ?? 'vault';
   if (linkScope !== 'vault' && linkScope !== 'inbox') return fail();
   const provider = v.provider ?? 'jev';
-  if (provider !== 'jev' && provider !== 'openai-compatible' && provider !== 'anthropic') return fail();
+  if (provider !== 'jev' && provider !== 'openai-compatible' && provider !== 'anthropic' && provider !== 'ollama') return fail();
   const modelId = string('modelId', PROVIDER_DEFAULTS[provider].modelId);
   if (!modelId.trim() || modelId.length > 200 || (provider === 'jev' && modelId !== DEFAULT_SETTINGS.modelId)) return fail();
   const endpoint = validateEndpoint(string('endpoint', PROVIDER_DEFAULTS[provider].endpoint));

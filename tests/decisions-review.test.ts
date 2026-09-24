@@ -5,7 +5,7 @@ import { MemoryFolderProfiles } from '../src/folders/profiles';
 import { createDecisionClient, parseRankedResponse } from '../src/providers/client';
 import { DEFAULT_SETTINGS, parseSettings } from '../src/settings';
 import { byteLength } from '../src/jev/request';
-import type { ChoiceBatch, DecisionScheduler } from '../src/jev/types';
+import type { ChoiceBatch, DecisionScheduler, HttpTransport } from '../src/jev/types';
 import { answer, batch, context, note, scope } from './helpers';
 function scheduler() { const requests: ChoiceBatch[] = []; const value: DecisionScheduler = { evaluate: vi.fn(async request => { requests.push(request); return answer(request); }), cancel() {}, setPaused() {}, status: () => ({ pending: 0, inFlight: false, paused: false, reason: null }), subscribe: () => () => undefined, dispose() {} }; return { value, requests }; }
 const ranked = JSON.stringify({ answers: { pick: { choice: 'yes', ranking: ['yes', 'no'] } } });
@@ -125,4 +125,42 @@ it('keeps optional dense multilingual profiles within the classification budget'
   expect(proposal.selected).not.toBeNull();
   expect(requests.length).toBeGreaterThan(1);
   expect(JSON.stringify(requests.at(-1)?.questions)).not.toContain('profile');
+});
+
+describe('explicit Ollama structured output', () => {
+  it('uses explicit loopback defaults and does not change generic compatible requests', async () => {
+    expect(parseSettings({ provider: 'ollama' })).toMatchObject({ provider: 'ollama', endpoint: 'http://127.0.0.1:11434/v1', modelId: 'qwen3:1.7b' });
+    const post = vi.fn<HttpTransport['post']>(async () => ({ status: 200, headers: {}, json: { choices: [{ finish_reason: 'stop', message: { content: ranked } }] } }));
+    for (const provider of ['ollama', 'openai-compatible'] as const) {
+      await createDecisionClient({ post }, { get: () => null }, () => ({ provider, endpoint: 'http://127.0.0.1:11579/v1' })).evaluate(batch);
+    }
+    const request = JSON.parse(post.mock.calls[0]![2]!) as { response_format: unknown };
+    expect(request.response_format).toMatchObject({ type: 'json_schema', json_schema: { strict: true } });
+    expect(request.response_format).toHaveProperty('json_schema.schema.additionalProperties', false);
+    expect(request.response_format).toHaveProperty('json_schema.schema.properties.answers.required', ['pick']);
+    expect(request.response_format).toHaveProperty('json_schema.schema.properties.answers.properties.pick', {
+      type: 'object', required: ['choice', 'ranking'], additionalProperties: false,
+      properties: { choice: { type: 'string', enum: ['yes', 'no'] }, ranking: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'string', enum: ['yes', 'no'] } } },
+    });
+    expect(JSON.parse(post.mock.calls[1]![2]!).response_format).toEqual({ type: 'json_object' });
+  });
+  it.each([
+    { answers: { pick: { choice: 'no', ranking: ['yes', 'no'] } } },
+    { answers: { pick: { choice: 'yes', ranking: ['yes', 'yes'] } } },
+    { answers: { pick: { choice: 'yes', ranking: ['yes', 'outside'] } } },
+    { answers: { wrong: { choice: 'yes', ranking: ['yes', 'no'] } } },
+  ])('still rejects contradictory, duplicate, outside or wrong-question model output', async response => {
+    const client = createDecisionClient({ post: async () => ({ status: 200, headers: {}, json: { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(response) } }] } }) }, { get: () => null }, () => ({ provider: 'ollama', endpoint: 'http://127.0.0.1:11579/v1' }));
+    await expect(client.evaluate(batch)).rejects.toMatchObject({ code: 'invalid-response' });
+  });
+  it('does not send keyless requests to remote Ollama hosts', async () => {
+    const post = vi.fn();
+    const client = createDecisionClient({ post }, { get: () => null }, () => ({ provider: 'ollama', endpoint: 'https://example.com/v1' }));
+    await expect(client.evaluate(batch)).rejects.toMatchObject({ code: 'authentication' }); expect(post).not.toHaveBeenCalled();
+  });
+  it.each([[401, 'authentication'], [429, 'rate-limit']] as const)('maps Ollama HTTP %s without exposing response content', async (status, code) => {
+    const client = createDecisionClient({ post: async () => ({ status, headers: { 'retry-after': '2' }, json: { error: 'private model diagnostics' } }) }, { get: () => null }, () => ({ provider: 'ollama', endpoint: 'http://127.0.0.1:11579/v1' }));
+    await expect(client.evaluate(batch)).rejects.toMatchObject({ code });
+  });
+
 });

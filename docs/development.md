@@ -16,7 +16,7 @@
 - `filing/classifier.ts` 导出 `MixedDepthClassifier implements FolderClassifier`，构造参数 `DecisionScheduler`，可选配置 getter 返回 `longNoteStrategy` 与 `profiles`。
 - `filing/note-excerpt.ts` 的 `prepareNote(note, strategy)` 返回 `{ note, excerpt? }`；源指纹始终对应完整原文。
 - `folders/profiles.ts` 的 `MemoryFolderProfiles` 仅保存内存元数据，提供 `upsert/remove/clear/enrich/prefilter`；默认不将画像附入请求。
-- `providers/client.ts` 的 `createDecisionClient(transport, secrets, settingsGetter)` 返回统一 `DecisionClient`，按 `provider/endpoint` 路由 Jev、OpenAI-compatible 或 Anthropic。
+- `providers/client.ts` 的 `createDecisionClient(transport, secrets, settingsGetter)` 返回统一 `DecisionClient`，按 `provider/endpoint` 路由 Jev、OpenAI-compatible、Anthropic 或显式 Ollama。只有 Ollama 使用按问题 ID 和候选生成的 JSON Schema；所有排名提供方仍由同一严格解析器检查完整、唯一的候选 ID 及首位一致性。
 - `linking/recommender.ts` 导出 `JevLinkRecommender implements LinkRecommender`，构造参数 `DecisionScheduler`，内存缓存有界。
 - `linking/metadata-index.ts` 导出 `MemoryMetadataIndex implements MetadataIndex`，无参构造，压缩前缀树可独立成领域内文件。
 - `linking/mention-matcher.ts` 导出 `LocalMentionMatcher implements MentionMatcher`，构造参数 `MetadataIndex`。
@@ -48,7 +48,7 @@ Node 22.12+；使用 npm 11 验证 `npx --yes npm@11 ci --ignore-scripts`，再�
 
 ## UI 入口与端口
 
-0.2.0 开发预览在主区域复用 `note-organizer-inbox` ItemView；旧侧栏 view 会迁移。`ReviewPanel` 负责分组清单、单篇 Markdown 预览与操作栏，`AnalysisModal` 在发送前确认待分析路径，`LinkSuggestionsModal` 固定源会话并批量确认链接，`filingBanner` 用 CM6 顶部 panel 展示当前笔记归档与撤销。状态栏展示归档图标／数量及当前笔记链接入口；设置使用原生 `setHeading`，更多操作使用原生 `Menu`。
+0.2.1 开发预览在主区域复用 `note-organizer-inbox` ItemView；旧侧栏 view 会迁移。`ReviewPanel` 负责分组清单、单篇 Markdown 预览与操作栏，`AnalysisModal` 在发送前确认待分析路径，`LinkSuggestionsModal` 固定源会话并批量确认链接，`filingBanner(controller, chooseDestination)` 用 CM6 顶部 panel 展示当前笔记归档、更换位置与撤销。选择器由宿主注入；同一路径共享手选目标与隐藏状态，目标绑定建议 ID，失效回调不能覆盖新建议；切换文件清除当前提示条的撤销入口。状态栏展示归档图标／数量及当前笔记链接入口；设置使用原生 `setHeading`，更多操作使用原生 `Menu`。
 
 整理视图成功归档后自动前进，并用撤销条和短暂防连击保护避免连续误操作；分值接近时可显示两个改选目录，不展示模型概率。状态变化将条目移入对应分组，保留当前笔记和焦点；同组内不因后台更新重新排序。预览与计划准备均有异步代次检查，销毁时释放 MarkdownRenderer 子组件和订阅；插件重载时重建遗留视图的协调器绑定。归档界面与提示条可以并存，任何入口都不能凭模型响应直接写入；实际交互以 [交互文档](interaction-design.md) 为准。
 
@@ -64,7 +64,7 @@ Node 22.12+；使用 npm 11 验证 `npx --yes npm@11 ci --ignore-scripts`，再�
 
 `MoveHost.referencesSafe` 返回 true、false 或具体拒绝原因。只有运行时类型保护后的 `vault.getConfig('alwaysUpdateLinks') === true` 才允许依赖宿主改写路径引用；配置未知时使用保守检查。移动后按先前记录的链接类别和序号复核入链与出链解析，最多等待约 1 秒；失败保留文件现状并进入 review，不自动反向写回。
 
-Obsidian 1.13.7 合成库已验证目录选择不冻结、带入出链移动及两条链接更新／撤销、顶部提示条移动／撤销，以及本地模拟 HTTP 后两条补链的单次原生 Undo。该证据仅覆盖这些场景：最低支持版本 1.11.4、全部私有语法、同步／外部并发编辑、本地真实模型和不同服务的推荐质量未据此验证。详细宿主证据由 [验证记录](validation.md) 维护，工程端口不扩大自动写入权限。
+Obsidian 1.13.7 合成库已验证目录选择不冻结、带入出链移动及两条链接更新／撤销、顶部提示条移动／撤销，以及本地模拟 HTTP 后两条补链的单次原生 Undo。该证据仅覆盖这些场景：最低支持版本 1.11.4、全部私有语法、同步／外部并发编辑、不同服务在真实语料中的推荐质量未据此验证。真实 Ollama 固定合成示例和原生连接已经单独验收，协议有效不代表语义判断全部正确。详细宿主证据由 [验证记录](validation.md) 维护，工程端口不扩大自动写入权限。
 
 ## 开发命令和交付
 

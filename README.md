@@ -4,7 +4,7 @@
 
 A desktop Obsidian plugin that suggests folders for inbox notes and internal links while you write. Review suggestions before applying them: moving notes and inserting links always require your confirmation.
 
-This is a **0.2.0 development preview**, not a community-store release. Note Organizer is a working name; the final name, author attribution and license remain undecided. Requires **Obsidian 1.11.4+ on desktop**. Mobile support is not claimed.
+This is a **0.2.1 development preview**, not a community-store release. Note Organizer is a working name; the final name, author attribution and license remain undecided. Requires **Obsidian 1.11.4+ on desktop**. Mobile support is not claimed.
 
 ## Get started
 
@@ -28,8 +28,9 @@ Only the **active provider** receives analysis requests:
 | TypeSafe Jev | `https://api.typesafe.ai/v1/systemone` |
 | OpenAI-compatible | `https://api.openai.com/v1/chat/completions` |
 | Anthropic | `https://api.anthropic.com/v1/messages` |
+| Ollama | `http://127.0.0.1:11434/v1/chat/completions` |
 
-Compatible providers accept a custom base URL. For example, an independently installed Ollama service can use `http://localhost:11434/v1` with the OpenAI-compatible provider. The plugin does not install or start a model service. A local endpoint receives the same content described below; whether it forwards that content elsewhere depends on that service. No provider fallback silently sends notes to a different service.
+Compatible providers accept a custom base URL. For a local Ollama installation, select **Ollama**, supply its base URL and an installed model ID, and leave the saved key blank. Its default model is `qwen3:1.7b`; remote endpoints still require a key. The plugin does not install or start a model service. A local endpoint receives the same content described below; whether it forwards that content elsewhere depends on that service. No provider fallback silently sends notes to a different service.
 
 What an analysis request can contain:
 
@@ -46,7 +47,7 @@ One inbox, Markdown notes, desktop only. Link discovery starts from filenames an
 
 Moves that cannot preserve references safely are refused. If a move has already occurred but link updates cannot be verified, its record requires review; the plugin does not automatically move it back. Move undo is limited to the current plugin session. Restart recovery archives resolved operations and leaves ambiguous moves for review.
 
-Automated tests cover domain logic and editor/HTTP/UI substitutes. In an Obsidian 1.13.7 synthetic vault, host checks covered folder selection, a move with incoming and outgoing links, both link updates, move undo, filing-banner actions, and two link insertions restored by one native Undo. The batch-link check used a local mock HTTP response, not a real model. Earlier Jev smoke checks used synthetic examples. Local-model operation, recommendation quality in real writing workflows, and other host versions remain unverified. See [validation scope](docs/validation.md) and [release requirements](docs/releasing.md).
+Automated tests cover domain logic and editor/HTTP/UI substitutes. In an Obsidian 1.13.7 synthetic vault, host checks covered folder selection, a move with incoming and outgoing links, both link updates, move undo, filing-banner actions, and two link insertions restored by one native Undo. The batch-link check used a local mock HTTP response, not a real model. Paired Jev evaluations used synthetic examples. A real local Ollama `qwen3:1.7b` returned four valid responses but made one incorrect filing choice; its native connection check passed. This verifies protocol compatibility, not recommendation quality in real writing workflows. Other host versions remain unverified. See the [Ollama results](docs/ollama-acceptance.md). See [validation scope](docs/validation.md) and [release requirements](docs/releasing.md).
 
 ## Development
 
