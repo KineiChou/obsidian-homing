@@ -32,13 +32,15 @@ beforeEach(() => {
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
-function fixture(options: { navigatorVersion?: string; markers?: boolean } = {}) {
+function fixture(options: { navigatorVersion?: string; markers?: boolean; deferLayout?: boolean } = {}) {
   const app = new FakeApp(), changes = new Emitter();
   const explorer = { view: { containerEl: document.createElement('div'), fileItems: {} as Record<string, { selfEl: HTMLElement }> } };
   for (const path of ['Inbox', 'Inbox/Ready.md', 'Inbox/Raw.md']) explorer.view.fileItems[path] = { selfEl: explorer.view.containerEl.appendChild(document.createElement('div')) };
-  const navigator = { file: undefined as undefined | ((context: unknown) => void), folder: undefined as undefined | ((context: unknown) => void) };
+  const layoutReady: (() => void)[] = [];
+  if (options.deferLayout) app.workspace.onLayoutReady = callback => { layoutReady.push(callback); };
+  const navigator = { disposeFile: vi.fn(), disposeFolder: vi.fn(), file: undefined as undefined | ((context: unknown) => void), folder: undefined as undefined | ((context: unknown) => void) };
   Object.assign(app.workspace, { getLeavesOfType: (type: string) => type === 'file-explorer' ? [explorer] : [] });
-  if (options.navigatorVersion) Object.assign(app, { plugins: { plugins: { 'notebook-navigator': { api: { getVersion: () => options.navigatorVersion, menus: { registerFileMenu: (callback: (context: unknown) => void) => { navigator.file = callback; return () => undefined; }, registerFolderMenu: (callback: (context: unknown) => void) => { navigator.folder = callback; return () => undefined; } } } } } } });
+  if (options.navigatorVersion) Object.assign(app, { plugins: { plugins: { 'notebook-navigator': { api: { getVersion: () => options.navigatorVersion, menus: { registerFileMenu: (callback: (context: unknown) => void) => { navigator.file = callback; return navigator.disposeFile; }, registerFolderMenu: (callback: (context: unknown) => void) => { navigator.folder = callback; return navigator.disposeFolder; } } } } } } });
   const entries: FilingEntry[] = [
     { path: 'Inbox/Ready.md', status: 'ready', updatedAt: 1, message: null, proposal: { id: 'p', source: { noteId: 1, path: 'Inbox/Ready.md', revision: 1, contentHash: 'h' }, foldersRevision: 1, context, selected: 'reading', ranked: [{ targetId: 'reading', probability: .5 }, { targetId: 'projects', probability: .45 }] } },
     { path: 'Inbox/Raw.md', status: 'waiting', updatedAt: 1, message: null },
@@ -54,7 +56,7 @@ function fixture(options: { navigatorVersion?: string; markers?: boolean } = {})
   const plugin = new Plugin(app);
   registerExplorerIntegration(plugin as unknown as ObsidianPlugin, controller as unknown as OrganizerController, actions);
   const nativeMenu = (file: TFile | TFolder) => { const value = menu(); app.workspace.emit('file-menu', value, file); return value; };
-  return { app, controller, actions, plugin, explorer, navigator, nativeMenu, settings, emit: () => changes.emit() };
+  return { app, controller, actions, plugin, explorer, navigator, nativeMenu, settings, layoutReady, emit: () => changes.emit() };
 }
 
 it('adds filing actions to the native file menu only for inbox notes and files the displayed destination', async () => {
@@ -94,4 +96,42 @@ it('marks suggested notes and the inbox count in the built-in explorer and clear
   f.settings.explorerMarkers = false; f.emit(); await vi.advanceTimersByTimeAsync(200);
   expect(items['Inbox/Ready.md']!.selfEl.dataset.noteOrganizer).toBeUndefined(); expect(items['Inbox']!.selfEl.dataset.noteOrganizerCount).toBeUndefined();
   f.plugin.unload();
+});
+
+it('rebinds a replacement Navigator API once and disposes each registration once', () => {
+  const f = fixture({ navigatorVersion: '2.0.0' });
+  const initialFileMenu = f.navigator.file;
+  f.app.workspace.emit('layout-change'); expect(f.navigator.file).toBe(initialFileMenu);
+  const disposeFile = vi.fn(), disposeFolder = vi.fn();
+  const replacement = { getVersion: () => '2.0.0', menus: { registerFileMenu: vi.fn(() => disposeFile), registerFolderMenu: vi.fn(() => disposeFolder) } };
+  Object.assign(f.app, { plugins: { plugins: { 'notebook-navigator': { api: replacement } } } });
+  f.app.workspace.emit('layout-change'); f.app.workspace.emit('layout-change');
+  expect(f.navigator.disposeFile).toHaveBeenCalledOnce(); expect(f.navigator.disposeFolder).toHaveBeenCalledOnce();
+  expect(replacement.menus.registerFileMenu).toHaveBeenCalledOnce(); expect(replacement.menus.registerFolderMenu).toHaveBeenCalledOnce();
+  expect(disposeFile).not.toHaveBeenCalled(); expect(disposeFolder).not.toHaveBeenCalled();
+  f.plugin.unload(); f.plugin.unload();
+  expect(disposeFile).toHaveBeenCalledOnce(); expect(disposeFolder).toHaveBeenCalledOnce();
+  expect(f.navigator.disposeFile).toHaveBeenCalledOnce(); expect(f.navigator.disposeFolder).toHaveBeenCalledOnce();
+});
+
+it('clears the old Navigator registrations when the API disappears and registers when it returns', () => {
+  const f = fixture({ navigatorVersion: '2.0.0' });
+  Object.assign(f.app, { plugins: { plugins: {} } }); f.app.workspace.emit('layout-change'); f.app.workspace.emit('layout-change');
+  expect(f.navigator.disposeFile).toHaveBeenCalledOnce(); expect(f.navigator.disposeFolder).toHaveBeenCalledOnce();
+  const dispose = vi.fn();
+  const replacement = { getVersion: () => '2.0.0', menus: { registerFileMenu: vi.fn(() => dispose), registerFolderMenu: vi.fn(() => dispose) } };
+  Object.assign(f.app, { plugins: { plugins: { 'notebook-navigator': { api: replacement } } } }); f.app.workspace.emit('layout-change');
+  expect(replacement.menus.registerFileMenu).toHaveBeenCalledOnce(); expect(replacement.menus.registerFolderMenu).toHaveBeenCalledOnce();
+  f.plugin.unload(); expect(dispose).toHaveBeenCalledTimes(2);
+});
+
+it('ignores layout-ready callbacks delivered after Organizer unload', () => {
+  const f = fixture({ navigatorVersion: '2.0.0', deferLayout: true });
+  expect(f.navigator.file).toBeUndefined(); expect(f.navigator.folder).toBeUndefined();
+  f.plugin.unload();
+  for (const ready of f.layoutReady) ready();
+  f.app.workspace.emit('layout-change');
+  expect(f.navigator.file).toBeUndefined(); expect(f.navigator.folder).toBeUndefined();
+  expect(f.navigator.disposeFile).not.toHaveBeenCalled(); expect(f.navigator.disposeFolder).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
 });
