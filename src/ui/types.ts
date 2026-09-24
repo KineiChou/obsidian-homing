@@ -41,5 +41,8 @@ export interface OrganizerController {
   confirmLinks(plans: readonly LinkPlan[]): LinkConfirmation;
   dismissLink(proposal: LinkProposal): void;
   openNote(path: string): void;
+  linkSuggestions(): readonly LinkProposal[];
+  nextInboxNote(exclude?: string): string | null;
+  attachmentCount(path: string): number;
   target(id: number): LinkTarget | undefined;
 }

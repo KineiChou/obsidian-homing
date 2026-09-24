@@ -1,17 +1,13 @@
 import { App, Modal, Plugin, PluginSettingTab, SecretComponent, Setting } from 'obsidian';
 import type { OrganizerController } from './types';
-import { PROVIDER_DEFAULTS, type DecisionProvider, type OrganizerSettings, type FolderRule } from '../settings';
-import { errorText, t } from '../i18n';
+import { PROVIDER_DEFAULTS, type DecisionProvider, type OrganizerSettings, type FolderRule, type LinkHintStyle } from '../settings';
+import { errorText, t, translateMessage } from '../i18n';
 import { button, details, node } from './dom';
 import { CreateInboxModal, TargetPicker } from './target-picker';
 
 export class OrganizerSettingsTab extends PluginSettingTab {
   constructor(app: App, plugin: Plugin, private readonly controller: OrganizerController) { super(app, plugin); }
   display(): void { this.containerEl.replaceChildren(); renderSettings(this.containerEl, this.app, this.controller); }
-}
-export class OrganizerSettingsModal extends Modal {
-  constructor(app: App, private readonly controller: OrganizerController) { super(app); }
-  onOpen(): void { this.setTitle(t('organizer.title')); renderSettings(this.contentEl, this.app, this.controller); }
 }
 export function renderSettings(container: HTMLElement, app: App, controller: OrganizerController): void {
   container.classList.add('note-organizer', 'note-organizer-settings');
@@ -51,6 +47,9 @@ export function renderSettings(container: HTMLElement, app: App, controller: Org
   new Setting(options).setName(t('settings.automation')).setHeading();
   new Setting(options).setName(t('settings.autoFiling')).setDesc(t('settings.autoFilingHelp')).addToggle(toggle => toggle.setValue(configuration.autoFiling).onChange(value => change({ autoFiling: value })));
   new Setting(options).setName(t('settings.autoLinks')).setDesc(t('settings.autoLinksHelp')).addToggle(toggle => toggle.setValue(configuration.autoLinks).onChange(value => change({ autoLinks: value })));
+  new Setting(options).setName(t('settings.display')).setHeading();
+  new Setting(options).setName(t('settings.linkHints')).setDesc(t('settings.linkHintsHelp')).addDropdown(dropdown => dropdown.addOption('underline', t('settings.hintUnderline')).addOption('marker', t('settings.hintMarker')).addOption('off', t('settings.hintOff')).setValue(configuration.linkHints).onChange(value => change({ linkHints: value as LinkHintStyle })));
+  new Setting(options).setName(t('settings.explorerMarkers')).setDesc(t('settings.explorerMarkersHelp')).addToggle(toggle => toggle.setValue(configuration.explorerMarkers).onChange(value => change({ explorerMarkers: value })));
   const advanced = node(options, 'details');
   new Setting(node(advanced, 'summary')).setName(t('settings.scope')).setHeading();
   new Setting(advanced).setName(t('settings.subfolders')).addToggle(toggle => toggle.setValue(configuration.includeSubfolders).onChange(value => change({ includeSubfolders: value })));
@@ -65,7 +64,25 @@ export function renderSettings(container: HTMLElement, app: App, controller: Org
   const manage = node(options, 'details');
   new Setting(node(manage, 'summary')).setName(t('settings.manage')).setHeading();
   new Setting(manage).setName(t('settings.restore')).setDesc(t('settings.restoreHelp')).addButton(control => control.setButtonText(t('settings.restoreAction')).onClick(() => { controller.restoreIgnored(); status.textContent = t('settings.restored'); }));
+  renderHistory(node(manage, 'div', undefined, 'note-organizer-history'), controller);
   new Setting(manage).setName(t('settings.pause')).setDesc(t('settings.pauseHelp')).addToggle(toggle => toggle.setValue(!controller.enabled()).onChange(paused => controller.setEnabled(!paused)));
+}
+/** Recent moves live with other management tools; the editor pill keeps the latest undo at hand. */
+function renderHistory(container: HTMLElement, controller: OrganizerController): void {
+  const render = () => {
+    container.replaceChildren();
+    new Setting(container).setName(t('organizer.recent')).setHeading();
+    const records = controller.recentMoves().slice(-20).reverse();
+    if (!records.length) node(container, 'p', t('settings.historyEmpty'), 'note-organizer-muted');
+    for (const record of records) {
+      const row = node(container, 'div', undefined, 'note-organizer-recent'); node(row, 'span', record.to, 'note-organizer-path');
+      const run = (action: () => Promise<void>) => { void action().then(render).catch(error => { node(row, 'span', errorText(error), 'note-organizer-feedback'); }); };
+      if (record.status === 'done') button(row, t('organizer.undo'), () => run(() => controller.undoMove(record.id)));
+      else if (record.status === 'review' || record.status === 'intent') { node(row, 'span', record.message ? translateMessage(record.message) : t('organizer.needsReview'), 'note-organizer-muted'); if (record.status === 'review') button(row, t('organizer.acknowledge'), () => run(() => controller.acknowledgeMove(record.id))); }
+      else node(row, 'span', t(record.status === 'archived' ? 'organizer.archived' : 'organizer.undone'), 'note-organizer-muted');
+    }
+  };
+  render();
 }
 class FolderRuleModal extends Modal {
   constructor(app: App, private readonly controller: OrganizerController, private readonly path: string) { super(app); }

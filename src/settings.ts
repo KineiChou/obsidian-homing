@@ -28,12 +28,15 @@ export interface OrganizerSettings {
   readonly folderRules: readonly FolderRule[];
   readonly dailyRequestLimit: number;
   readonly modelId: string;
+  readonly linkHints: LinkHintStyle;
+  readonly explorerMarkers: boolean;
 }
+export type LinkHintStyle = 'underline' | 'marker' | 'off';
 export const DEFAULT_SETTINGS: OrganizerSettings = {
   provider: 'jev', endpoint: PROVIDER_DEFAULTS.jev.endpoint, longNoteStrategy: 'excerpt', folderProfilesEnabled: false,
   inbox: '', includeSubfolders: true, secretName: '', autoFiling: true, autoLinks: false,
   linkScope: 'vault', excludedPaths: [], excludedDestinations: [], folderRules: [],
-  dailyRequestLimit: 100, modelId: 'jev-1.13.0',
+  dailyRequestLimit: 100, modelId: 'jev-1.13.0', linkHints: 'underline', explorerMarkers: true,
 };
 
 export function parseSettings(value: unknown): OrganizerSettings {
@@ -64,6 +67,8 @@ export function parseSettings(value: unknown): OrganizerSettings {
   if (!modelId.trim() || modelId.length > 200 || (provider === 'jev' && modelId !== DEFAULT_SETTINGS.modelId)) return fail();
   const endpoint = validateEndpoint(string('endpoint', PROVIDER_DEFAULTS[provider].endpoint));
   if (provider === 'jev' && endpoint !== PROVIDER_DEFAULTS.jev.endpoint) return fail();
+  const linkHints = v.linkHints ?? 'underline';
+  if (linkHints !== 'underline' && linkHints !== 'marker' && linkHints !== 'off') return fail();
   const longNoteStrategy = v.longNoteStrategy ?? 'excerpt';
   if (longNoteStrategy !== 'excerpt' && longNoteStrategy !== 'full') return fail();
   return {
@@ -71,7 +76,7 @@ export function parseSettings(value: unknown): OrganizerSettings {
     inbox: safePath(string('inbox', ''), true), secretName: string('secretName', ''),
     includeSubfolders: boolean('includeSubfolders', true), autoFiling: boolean('autoFiling', true), autoLinks: boolean('autoLinks', false),
     linkScope, excludedPaths: paths('excludedPaths'), excludedDestinations: paths('excludedDestinations'), folderRules,
-    dailyRequestLimit: Number(limit), modelId,
+    dailyRequestLimit: Number(limit), modelId, linkHints, explorerMarkers: boolean('explorerMarkers', true),
   };
 }
 function fail(): never { throw new OrganizerError('invalid-settings', 'error.settingsInvalid'); }

@@ -347,6 +347,20 @@ export class ObsidianOrganizer implements OrganizerController {
   }
   confirmLink(plan: LinkPlan): void { const result = this.confirmLinks([plan]); if (result.failures[0]) throw result.failures[0].error; }
   dismissLink(proposal: LinkProposal): void { this.editors.get(proposal.input.anchor.editorSessionId)?.suppress(proposal.input.anchor, proposal.selected); this.links = this.links.filter(item => item.id !== proposal.id); this.events.emit(); }
+  linkSuggestions(): readonly LinkProposal[] { return this.links; }
+  nextInboxNote(exclude?: string): string | null {
+    const open = this.filing.filter(entry => entry.path !== exclude && !['done', 'moving', 'ignored', 'review'].includes(entry.status) && this.vault.file(entry.path) && this.vault.eligible(entry.path));
+    return (open.find(entry => entry.status === 'ready') ?? open[0])?.path ?? null;
+  }
+  attachmentCount(path: string): number {
+    const file = this.vault.file(path), cache = file && this.plugin.app.metadataCache.getFileCache(file);
+    const attachments = new Set<string>();
+    for (const embed of cache?.embeds ?? []) {
+      const target = this.plugin.app.metadataCache.getFirstLinkpathDest(parseLinktext(embed.link).path, path);
+      if (target && target.extension !== 'md') attachments.add(target.path);
+    }
+    return attachments.size;
+  }
   openNote(path: string): void { void this.plugin.app.workspace.openLinkText(path, this.activePath ?? '', false); }
   target(id: number) { return this.index.get(id); }
   async testConnection(): Promise<void> { await this.settingsWrite; const requestRevision = this.requestRevision; this.scheduler.setPaused(false); await this.scheduler.evaluate({ modelId: this.settings().modelId, state: 'A short example about learning.', questions: [{ id: 'connection', instructions: 'Choose the matching subject.', options: [{ id: 'learning', description: 'Learning and reading' }, { id: 'none', description: 'Other' }] }] }, { key: 'connection', priority: 'manual', automatic: false, isCurrent: () => !this.disposed && this.requestRevision === requestRevision }); }

@@ -12,8 +12,8 @@ Build with the commands below, then copy `main.js`, `manifest.json` and `styles.
 
 1. Choose an inbox and an analysis provider in settings. Supply your own service credentials, or configure a compatible local service.
 2. Test the connection with a fixed synthetic example, then enable filing suggestions. Review the scope and estimated requests before analyzing existing inbox notes.
-3. Open the inbox organizer in a main-area tab from the status bar. Review Markdown content beside the grouped note list, then confirm the destination. Successful filing advances to the next pending note and keeps an undo action. You can also file the current note from its editor-top suggestion banner.
-4. Run the command to find links for the current text, or separately enable automatic link suggestions. Select the suggestions to insert together; one editor undo restores the batch.
+3. Open an inbox note. A small pill in the editor's top-right corner shows the suggested folder; open it to confirm or pick another folder. After filing, the pill offers Undo and the next inbox note, so you can work through the inbox without leaving the editor. You can also right-click notes in the file explorer or Notebook Navigator, or open **Organize inbox** from the status bar to review destinations and file several notes at once.
+4. Run the command to find links for the current text, or separately enable automatic link suggestions. Suggested mentions get a faint dotted underline after you pause typing; hover to link, change the target or ignore. The link list still lets you insert several links in one undoable step.
 
 Filing and linking share a daily request cap. Automatic links can use up to 30% of that cap, rounded down. Batch estimates use metadata only and exclude retries. Multiple candidate groups and retries can consume multiple requests for one note. Request counts are local to this device; they are not a billing limit at your provider.
 

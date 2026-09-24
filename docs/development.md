@@ -48,9 +48,9 @@ Node 22.12+；使用 npm 11 验证 `npx --yes npm@11 ci --ignore-scripts`，再�
 
 ## UI 入口与端口
 
-0.2.1 开发预览在主区域复用 `note-organizer-inbox` ItemView；旧侧栏 view 会迁移。`ReviewPanel` 负责分组清单、单篇 Markdown 预览与操作栏，`AnalysisModal` 在发送前确认待分析路径，`LinkSuggestionsModal` 固定源会话并批量确认链接，`filingBanner(controller, chooseDestination)` 用 CM6 顶部 panel 展示当前笔记归档、更换位置与撤销。选择器由宿主注入；同一路径共享手选目标与隐藏状态，目标绑定建议 ID，失效回调不能覆盖新建议；切换文件清除当前提示条的撤销入口。状态栏展示归档图标／数量及当前笔记链接入口；设置使用原生 `setHeading`，更多操作使用原生 `Menu`。
+主要交互位于编辑器内，不使用侧栏或整理标签页；旧 `note-organizer-inbox`／`note-organizer-review` 视图注册为 `RetiredReviewView`，恢复时自动关闭。`filingPills(controller, host)` 是 CM6 ViewPlugin，把胶囊挂在 `view.dom` 并绝对定位，面板打开后才调用 `prepareMove`；同一路径共享手选目标，目标绑定建议 ID，文件对象变化才清除撤销状态。`linkHints(controller, host)` 用 Decoration 显示下划线或行尾标记，编辑后 `QUIET_MS` 内隐藏，控制器事件在微任务中以 StateEffect 刷新，悬停卡片挂在 `document.body`。`InboxModal` 逐篇准备并确认批量归档，`AnalysisModal` 在发送前确认待分析路径，`LinkSuggestionsModal` 固定源会话并批量确认链接。`registerExplorerIntegration` 注册原生 `file-menu`／`files-menu` 与 Notebook Navigator 1.2+ 菜单 API，并在检测到原生文件栏内部条目表时写入 `data-note-organizer` 标记。控制器为界面提供 `linkSuggestions()`、`nextInboxNote()` 与 `attachmentCount()`；`EditorSessions.sessionFor(view)` 让补链提示找到所属编辑会话。
 
-整理视图成功归档后自动前进，并用撤销条和短暂防连击保护避免连续误操作；分值接近时可显示两个改选目录，不展示模型概率。状态变化将条目移入对应分组，保留当前笔记和焦点；同组内不因后台更新重新排序。预览与计划准备均有异步代次检查，销毁时释放 MarkdownRenderer 子组件和订阅；插件重载时重建遗留视图的协调器绑定。归档界面与提示条可以并存，任何入口都不能凭模型响应直接写入；实际交互以 [交互文档](interaction-design.md) 为准。
+胶囊归档成功后提供撤销与同窗格的下一篇，两者有 400 ms 防连击；分值接近时可显示两个改选目录，不展示模型概率。计划准备均有异步代次检查，重渲染按签名跳过并恢复操作焦点。任何入口都不能凭模型响应直接写入；实际交互以 [交互文档](interaction-design.md) 为准。
 
 `EditorSession.snapshot()` 只读取，不清除脏区间。协调器仅在当前快照成功返回建议或确认没有候选时调用 `acknowledgeAnalysis(snapshot)`；调用校验会话与文档版本，只清除已分析窗口。失败、过期响应、预算拒绝和超时保留待分析范围，确认预览读取不得消费自动分析任务。
 

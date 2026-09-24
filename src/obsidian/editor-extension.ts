@@ -15,12 +15,13 @@ export interface EditorBridge {
 
 export class EditorSessions {
   private readonly sessions = new Map<string, NoteEditorSession>();
+  private readonly views = new WeakMap<EditorView, NoteEditorSession>();
   private focused: string | null = null;
   readonly extension: Extension;
   constructor(private readonly bridge: EditorBridge) {
     this.extension = ViewPlugin.define(view => {
       const session = new NoteEditorSession(view, this.bridge, () => { this.focused = session.id; });
-      this.sessions.set(session.id, session);
+      this.sessions.set(session.id, session); this.views.set(view, session);
       if (view.hasFocus) this.focused = session.id;
       return {
         update: (update: ViewUpdate) => session.update(update),
@@ -34,6 +35,7 @@ export class EditorSessions {
     return [...this.sessions.values()].find(session => session.path === path);
   }
   get(id: string): NoteEditorSession | undefined { return this.sessions.get(id); }
+  sessionFor(view: EditorView): NoteEditorSession | undefined { return this.views.get(view); }
   editing(path: string): boolean { return [...this.sessions.values()].some(session => session.path === path && session.focused); }
   dispose(): void { for (const session of this.sessions.values()) session.destroy(); this.sessions.clear(); }
 }
