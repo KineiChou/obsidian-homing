@@ -13,7 +13,7 @@
     "package": "npm run build && node scripts/package.mjs",
     "benchmark": "node benchmarks/metadata-index.mjs",
     "check": "npm run typecheck && npm run lint && npm test && npm run build",
-    "benchmark:links": "node --expose-gc benchmarks/link-matching.mjs"
+    "benchmark:links": "node --expose-gc benchmarks/link-scan.mjs"
   },
   "engines": {
     "node": ">=22.12.0"
