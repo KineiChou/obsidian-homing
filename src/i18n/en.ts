@@ -84,6 +84,7 @@ export const en = {
   "settings.connected": "Connected.",
   "settings.automation": "Suggestions",
   "settings.options": "More settings",
+  "settings.localKeyHelp": "Leave blank for Ollama on this computer. Remote services require a saved API key.",
   "settings.autoFiling": "Prepare filing suggestions automatically",
   "settings.autoFilingHelp": "New or edited inbox notes only. Notes move after your confirmation.",
   "settings.autoLinks": "Prepare links while writing",
