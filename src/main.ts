@@ -45,6 +45,7 @@ export default class NoteOrganizerPlugin extends Plugin {
     this.registerEditorExtension(hints.extension);
     const query = new LinkQuerySuggest(this.app, organizer);
     this.registerEditorSuggest(query);
+    this.register(() => query.close());
     // `[[?` starts like a native `[[` link; put this suggest first when the (internal) list is available.
     const suggests = (this.app.workspace as unknown as { editorSuggest?: { suggests?: unknown[] } }).editorSuggest?.suggests;
     if (Array.isArray(suggests) && suggests.indexOf(query) > 0) { suggests.splice(suggests.indexOf(query), 1); suggests.unshift(query); }
@@ -81,7 +82,9 @@ export default class NoteOrganizerPlugin extends Plugin {
   /** Gives every Markdown view a pill in its content container, in every view mode. */
   private attachPills(pills: FilingPills): void {
     const attached = new Map<MarkdownView, () => void>();
+    const lifecycle = this.lifecycle;
     const sync = () => {
+      if (this.lifecycle !== lifecycle) return;
       const views = this.app.workspace.getLeavesOfType('markdown').map(leaf => leaf.view).filter((view): view is MarkdownView => view instanceof MarkdownView);
       for (const [view, detach] of attached) if (!views.includes(view)) { detach(); attached.delete(view); }
       for (const view of views) if (!attached.has(view)) attached.set(view, pills.attach({
