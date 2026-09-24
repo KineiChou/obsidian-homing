@@ -74,5 +74,91 @@ it('turns a local mention into a confirmed insertion plan through the normal lin
   expect(proposal.input.anchor.contextText).toBe('Transformer encodes audio with Attention here.');
   expect(f.controller.prepareLink(proposal, proposal.selected!).replacement).toBe('[[ML/Attention|Attention]]');
   expect(f.controller.searchLinkTargets('transf', 'Inbox/source.md').map(item => item.target.path)).toEqual(['ML/Transformer.md', 'Power/Transformer.md']);
-  expect(f.controller.linkMarkdown('ML/Transformer.md', 'Inbox/source.md', '变压器')).toBe('[[ML/Transformer|变压器]]');
+  expect(f.controller.linkMarkdown(f.controller.target(f.controller.vault.id('ML/Transformer.md')!)!, 'Inbox/source.md', '变压器')).toBe('[[ML/Transformer|变压器]]');
+});
+
+it('keeps full word boundaries when a viewport cuts into a word', async () => {
+  const f = await fixture('SuperAttention works.');
+  expect(f.scan()).toEqual([]);
+  expect(f.controller.scanLinks(f.session, [{ from: 5, to: f.view.state.doc.length }])).toEqual([]);
+});
+
+it('cancels a queued hover check when hover verification is disabled', async () => {
+  const f = await fixture(); reply(ids => ids.find(id => id !== 'unassigned')!);
+  const response = requestUrl.getMockImplementation()!;
+  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+  requestUrl.mockImplementationOnce(async args => { await gate; return response(args); });
+  const first = f.controller.testConnection(); await vi.waitFor(() => expect(requestUrl).toHaveBeenCalledTimes(1));
+  const check = f.controller.verifyLink(f.session, f.scan()[0]!);
+  const rejected = expect(check).rejects.toMatchObject({ code: 'stale' });
+  await f.controller.saveSettings({ verifyOnHover: false });
+  expect(requestUrl).toHaveBeenCalledTimes(1); release(); await first; await rejected;
+  expect(requestUrl).toHaveBeenCalledTimes(1); expect(f.controller.usage().automaticLinkRequests).toBe(0);
+});
+
+it('rejects an old mention identity after its sentence changes', async () => {
+  const f = await fixture(); reply(ids => ids.find(id => id !== 'unassigned')!);
+  const mention = f.scan()[0]!;
+  const selected = await f.controller.verifyLink(f.session, mention);
+  const at = f.view.state.doc.toString().indexOf('audio'); f.view.dispatch({ changes: { from: at, to: at + 5, insert: 'power' } });
+  expect(f.scan()[0]).not.toHaveProperty('verified');
+  const staleSelection = { ...mention, verified: selected! };
+  expect(() => f.controller.linkProposalFor(f.session, staleSelection, selected!)).toThrow();
+  await expect(f.controller.verifyLink(f.session, staleSelection)).rejects.toThrow();
+});
+
+it('does not publish old confident proposals when an in-flight command is cancelled by editing', async () => {
+  const f = await fixture(); reply(ids => ids.find(id => id !== 'unassigned')!);
+  f.app.workspace.emit('file-open', f.app.vault.getFileByPath('Inbox/source.md'));
+  const response = requestUrl.getMockImplementation()!;
+  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+  requestUrl.mockImplementationOnce(async args => { await gate; return response(args); });
+  const pending = f.controller.findLinks(); const rejected = expect(pending).rejects.toThrow();
+  await vi.waitFor(() => expect(requestUrl).toHaveBeenCalledTimes(1));
+  const at = f.view.state.doc.toString().indexOf('Transformer');
+  f.view.dispatch({ changes: { from: at, to: at + 11, insert: 'A component' } });
+  await f.controller.findLinks();
+  await rejected; release();
+  expect(f.controller.state().links).toHaveLength(1);
+  expect(f.controller.state().links[0]!.input.anchor.documentRevision).toBe(1);
+});
+
+it('rejects query checks outside source scope and late query generations before sending', async () => {
+  const f = await fixture(); reply(() => 'unassigned');
+  const targets = f.controller.searchLinkTargets('Transformer', 'Inbox/source.md').map(item => item.target);
+  await expect(f.controller.verifyLinkQuery('Inbox/source.md', 'Transformer', 'Transformer', targets, () => false)).rejects.toThrow();
+  await f.controller.saveSettings({ excludedPaths: ['Inbox'] });
+  await expect(f.controller.verifyLinkQuery('Inbox/source.md', 'Transformer', 'Transformer', targets, () => true)).rejects.toThrow();
+  expect(() => f.controller.linkMarkdown(targets[0]!, 'Inbox/source.md')).toThrow();
+  expect(requestUrl).not.toHaveBeenCalled();
+});
+
+it('rejects query insertion when the selected target version has changed', async () => {
+  const f = await fixture();
+  const target = f.controller.target(f.controller.vault.id('ML/Transformer.md')!)!;
+  f.controller.index.upsert({ ...target, revision: target.revision + 1 });
+  expect(() => f.controller.linkMarkdown(target, 'Inbox/source.md')).toThrow();
+});
+
+it('rejects a stale candidate identity before creating a proposal or sending a check', async () => {
+  const f = await fixture();
+  const mention = f.scan()[0]!, target = mention.candidates[0]!.target;
+  f.controller.index.upsert({ ...target, revision: target.revision + 1 });
+  expect(() => f.controller.linkProposalFor(f.session, mention)).toThrow();
+  await expect(f.controller.verifyLink(f.session, mention)).rejects.toThrow();
+  expect(requestUrl).not.toHaveBeenCalled();
+});
+
+it('rejects a queued query when the UI query generation changes', async () => {
+  const f = await fixture(); reply(ids => ids[0]!);
+  const response = requestUrl.getMockImplementation()!;
+  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+  requestUrl.mockImplementationOnce(async args => { await gate; return response(args); });
+  const first = f.controller.testConnection(); await vi.waitFor(() => expect(requestUrl).toHaveBeenCalledTimes(1));
+  const candidates = f.controller.searchLinkTargets('Transformer', 'Inbox/source.md').map(item => item.target);
+  let current = true;
+  const pending = f.controller.verifyLinkQuery('Inbox/source.md', 'Transformer', 'Transformer', candidates, () => current);
+  const rejected = expect(pending).rejects.toThrow();
+  current = false; release(); await first; await rejected;
+  expect(requestUrl).toHaveBeenCalledTimes(1);
 });
