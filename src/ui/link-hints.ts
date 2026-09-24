@@ -100,7 +100,7 @@ class LinkHintView {
     return Decoration.set(ranges, true);
   }
   /** What the decorations depend on; controller events that leave it unchanged cost no editor transaction. */
-  private key(): string { return JSON.stringify([this.style(), this.scan().map(mention => [idOf(mention), mention.tier, mention.verified ?? null])]); }
+  private key(): string { return JSON.stringify([this.style(), this.scan().map(mention => [idOf(mention), mention.verdictKey, mention.tier, mention.verified ?? null])]); }
   private requestRefresh(): void {
     if (this.scheduled || !this.alive) return; this.scheduled = true;
     // Controller events can fire inside an editor update; dispatch afterwards.
@@ -112,6 +112,7 @@ class LinkHintView {
   update(update: ViewUpdate): void {
     if (update.docChanged) {
       this.typingUntil = Date.now() + QUIET_MS; this.closeCard();
+      this.checks.clear(); this.overrides.clear(); this.feedback.clear();
       clearTimeout(this.quietTimer); this.quietTimer = setTimeout(() => this.requestRefresh(), QUIET_MS + 10);
     }
     const refreshed = update.transactions.some(transaction => transaction.effects.some(effect => effect.is(refresh)));
@@ -186,21 +187,35 @@ class LinkHintView {
     card.style.top = rect.bottom + 6 + 'px'; card.style.width = width + 'px';
   }
   private verify(mention: LinkMention): void {
-    const id = idOf(mention), session = this.session;
-    if (settled(mention) || this.checks.has(id) || !session || !this.controller.settings().verifyOnHover) return;
-    this.checks.set(id, { state: 'pending' }); this.renderCard();
-    void this.controller.verifyLink(session, mention).then(selected => { this.checks.set(id, { state: 'done', selected }); }, error => { this.checks.set(id, { state: 'failed', message: errorText(error) }); }).then(() => { if (this.alive) this.renderCard(); });
+    const key = mention.verdictKey, session = this.session, previous = this.checks.get(key);
+    if (settled(mention) || (previous && previous.state !== 'failed') || !session || !this.controller.settings().verifyOnHover) return;
+    const pending: Check = { state: 'pending' };
+    this.checks.set(key, pending); this.renderCard();
+    const finish = (result: Check) => {
+      if (!this.alive || this.checks.get(key) !== pending) return;
+      this.checks.set(key, result); this.renderCard();
+    };
+    void this.controller.verifyLink(session, mention).then(selected => finish({ state: 'done', selected }), error => finish({ state: 'failed', message: errorText(error) }));
   }
   private renderCard(): void {
     const card = this.card; if (!card) return;
-    // Refresh positions and verdicts from the latest scan; keep a mention the model just rejected so its answer stays visible.
-    this.cardMentions = this.cardMentions.map(mention => this.mentions.find(item => idOf(item) === idOf(mention)) ?? mention);
+    if (this.style() === 'off') { this.closeCard(); return; }
+    this.cardMentions = this.cardMentions.flatMap(mention => {
+      const current = this.mentions.find(item => item.verdictKey === mention.verdictKey);
+      if (current) return [current];
+      const check = this.checks.get(mention.verdictKey), session = this.session;
+      // Keep a rejected answer visible only while its source and candidates still match.
+      if (session && (check?.state === 'pending' || (check?.state === 'done' && check.selected === null))) {
+        try { this.controller.linkProposalFor(session, mention); return [mention]; } catch { /* The card became stale. */ }
+      }
+      return [];
+    });
     if (!this.cardMentions.length) { this.closeCard(); return; }
     card.replaceChildren();
     for (const mention of this.cardMentions) this.renderMention(card, mention);
   }
   private renderMention(card: HTMLElement, mention: LinkMention): void {
-    const id = idOf(mention), check = this.checks.get(id), row = node(card, 'div', undefined, 'note-organizer-hint-row');
+    const id = mention.verdictKey, check = this.checks.get(id), row = node(card, 'div', undefined, 'note-organizer-hint-row');
     const verdict = check?.state === 'done' && check.selected !== null ? check.selected : undefined;
     const chosen = this.overrides.get(id) ?? mention.verified ?? verdict ?? (mention.tier === 'confident' ? mention.candidates[0]?.target.noteId : undefined);
     const target = mention.candidates.find(candidate => candidate.target.noteId === chosen)?.target;
@@ -209,7 +224,7 @@ class LinkHintView {
       node(row, 'div', breadcrumb(target.path) + (target.description ? ' · ' + target.description : ''), 'note-organizer-muted');
       const actions = node(row, 'div', undefined, 'note-organizer-actions');
       button(actions, t('hint.link'), () => this.link(mention, target.noteId), true);
-      if (mention.candidates.length > 1) button(actions, t('hint.other'), () => this.host.chooseTarget(mention.candidates.map(candidate => candidate.target), noteId => { this.overrides.set(id, noteId); this.renderCard(); }));
+      if (mention.candidates.length > 1) button(actions, t('hint.other'), () => this.host.chooseTarget(mention.candidates.map(candidate => candidate.target), noteId => { if (this.alive && this.cardMentions.some(item => item.verdictKey === id)) { this.overrides.set(id, noteId); this.renderCard(); } }));
       button(actions, t('hint.ignore'), () => this.ignore(mention));
     } else {
       const status = check?.state === 'pending' ? t('hint.checking') : check?.state === 'done' ? t('hint.noLink') : check?.state === 'failed' ? check.message : t('hint.choose');
@@ -228,7 +243,7 @@ class LinkHintView {
     if (problem) { const status = node(row, 'p', problem, 'note-organizer-feedback'); status.setAttribute('role', 'status'); }
   }
   private link(mention: LinkMention, targetId: number): void {
-    const id = idOf(mention), session = this.session;
+    const id = mention.verdictKey, session = this.session;
     this.feedback.delete(id);
     try {
       if (!session) return;
@@ -242,7 +257,7 @@ class LinkHintView {
   private ignore(mention: LinkMention): void {
     const session = this.session;
     if (!session) return;
-    try { this.controller.dismissLink(this.controller.linkProposalFor(session, mention)); } catch (error) { this.feedback.set(idOf(mention), errorText(error)); }
+    try { this.controller.dismissLink(this.controller.linkProposalFor(session, mention)); } catch (error) { this.feedback.set(mention.verdictKey, errorText(error)); }
     this.cardMentions = this.cardMentions.filter(item => idOf(item) !== idOf(mention)); this.renderCard();
   }
   private closeCard(): void {

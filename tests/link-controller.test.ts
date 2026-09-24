@@ -128,6 +128,7 @@ it('rejects query checks outside source scope and late query generations before 
   const targets = f.controller.searchLinkTargets('Transformer', 'Inbox/source.md').map(item => item.target);
   await expect(f.controller.verifyLinkQuery('Inbox/source.md', 'Transformer', 'Transformer', targets, () => false)).rejects.toThrow();
   await f.controller.saveSettings({ excludedPaths: ['Inbox'] });
+  expect(f.controller.searchLinkTargets('Transformer', 'Inbox/source.md')).toEqual([]);
   await expect(f.controller.verifyLinkQuery('Inbox/source.md', 'Transformer', 'Transformer', targets, () => true)).rejects.toThrow();
   expect(() => f.controller.linkMarkdown(targets[0]!, 'Inbox/source.md')).toThrow();
   expect(requestUrl).not.toHaveBeenCalled();

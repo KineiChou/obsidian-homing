@@ -476,6 +476,7 @@ export class ObsidianOrganizer implements OrganizerController {
     this.message = proposals.length ? null : 'links.empty'; this.events.emit();
   }
   searchLinkTargets(query: string, sourcePath: string) {
+    if (!this.ready || !this.vault.file(sourcePath) || !this.vault.linkSource(sourcePath)) return [];
     const fuzzy = prepareFuzzySearch(query.trim());
     return searchTargets(this.index, this.graph, { scorer: text => fuzzy(text)?.score ?? null, query, sourceNoteId: this.vault.id(sourcePath), sourcePath, allowed: target => this.vault.allowed(target.path) });
   }
