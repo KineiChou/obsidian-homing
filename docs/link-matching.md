@@ -154,7 +154,7 @@ score(c)      = w_kind·(0.6 + 0.4·commonness) + 0.25·related + 0.10·folder +
 - 每次扫描：只扫可见区域（单次至多 20 000 个单元）；目标 P95 < 2 ms。
 - `[[?` 模糊搜索：每次按键遍历全部文档的词条；目标 < 15 ms。
 
-`node --expose-gc benchmarks/link-matching.mjs`（`npm run benchmark:links`）只导入生产模块，合成 2 万篇中英混合标题笔记、每篇 5 条链接；扫描文本为 5 000 个单元、每次命中 128 处（达到单次上限的高密度情形）。2026-09-25 本机（Node 22.21.1、darwin arm64）一次观测：
+`node --expose-gc benchmarks/link-scan.mjs`（`npm run benchmark:links`）只导入生产模块，合成 2 万篇中英混合标题笔记、每篇 5 条链接；扫描文本为 5 000 个单元、每次命中 128 处（达到单次上限的高密度情形）。2026-09-25 本机（Node 22.21.1、darwin arm64）一次观测：
 
 | 指标 | 结果 |
 | --- | ---: |
