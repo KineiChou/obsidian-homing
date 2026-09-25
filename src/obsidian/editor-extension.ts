@@ -43,7 +43,7 @@ export class EditorSessions {
 export class NoteEditorSession implements EditorPort {
   readonly id = crypto.randomUUID();
   private revision = 0;
-  private timer: ReturnType<typeof setTimeout> | undefined;
+  private timer: number | undefined;
   private dirty: TextRange[] = [];
   private suppressions: Suppressed[] = [];
   private insertions: { from: number; original: string; replacement: string; target: number }[] = [];
@@ -92,9 +92,9 @@ export class NoteEditorSession implements EditorPort {
     if (update.docChanged || update.selectionSet || update.focusChanged) this.schedule();
   }
   private schedule(): void {
-    clearTimeout(this.timer);
+    window.clearTimeout(this.timer);
     if (!this.alive) return;
-    this.timer = setTimeout(() => {
+    this.timer = window.setTimeout(() => {
       if (this.view.composing) { this.schedule(); return; }
       if (this.path) this.bridge.idle(this.id);
     }, 1000);
@@ -173,5 +173,5 @@ export class NoteEditorSession implements EditorPort {
   forConfirmation(): EditorPort {
     return { snapshot: () => { const snapshot = this.snapshot(); return snapshot ? { ...snapshot, linkedNoteIds: this.bridge.linkedTargets(snapshot.path, this.view.state.doc.toString()) } : null; }, read: (a, b) => this.read(a, b), allows: (a, b) => this.allows(a, b), replace: (a, b, text) => this.replace(a, b, text), replaceMany: changes => this.replaceMany(changes), rememberInsertions: insertions => this.rememberInsertions(insertions), suppress: (anchor, target) => this.suppress(anchor, target) };
   }
-  destroy(): void { this.alive = false; clearTimeout(this.timer); this.suppressions = []; }
+  destroy(): void { this.alive = false; window.clearTimeout(this.timer); this.suppressions = []; }
 }

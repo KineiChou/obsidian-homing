@@ -1,6 +1,6 @@
 # 发布准备
 
-当前为桌面开发预览。正式名称为 **Homing（归位）**，插件 ID `homing`（开发阶段曾用 `note-organizer`），作者 KineiChou，许可证 Apache-2.0（仓库根目录 `LICENSE` 与 `NOTICE`）。准备工作流不等于批准发布或提交社区市场。
+0.2.5 为首个正式版（桌面端）。正式名称为 **Homing（归位）**，插件 ID `homing`（开发阶段曾用 `note-organizer`），作者 KineiChou，许可证 Apache-2.0（仓库根目录 `LICENSE` 与 `NOTICE`）。准备工作流不等于批准发布或提交社区市场。
 
 ## 当前验证范围
 
@@ -19,7 +19,7 @@ node scripts/verify-release.mjs 0.2.1
 npm run check
 ```
 
-示例版本仅演示格式，实际发布使用将要发布的版本。工作流固定 Node 22.21.1、npm 11.6.2，以 `npm ci --ignore-scripts` 安装锁定依赖，运行类型检查、lint、测试和构建。构建 job 只有 `contents: read` 权限；独立 release job 获得 `contents: write`，只下载构建产物，并用 `--verify-tag` 创建 **draft prerelease**，附件为 `main.js`、`manifest.json`、`styles.css`（社区市场只安装这三个文件）；`main.js` 顶部保留 esbuild 写入的署名与许可证注释，完整的 `LICENSE`／`NOTICE` 随源码仓库及 `npm run package` 的安装目录提供。它不生成标签，不自动公开草稿，也不覆盖已有 release。
+示例版本仅演示格式，实际发布使用将要发布的版本。工作流固定 Node 22.21.1、npm 11.6.2，以 `npm ci --ignore-scripts` 安装锁定依赖，运行类型检查、lint、测试和构建。构建 job 只有 `contents: read` 权限；独立 release job 获得 `contents: write`，只下载构建产物，并用 `--verify-tag` 创建**草稿 Release**（负责人检查后再公开），附件为 `main.js`、`manifest.json`、`styles.css`（社区市场只安装这三个文件）；`main.js` 顶部保留 esbuild 写入的署名与许可证注释，完整的 `LICENSE`／`NOTICE` 随源码仓库及 `npm run package` 的安装目录提供。它不生成标签，不自动公开草稿，也不覆盖已有 release。
 
 实际推送标签会触发远程操作，必须另行取得发布授权。发布负责人检查草稿和资产后再决定何时公开，以及何时提交 Obsidian 社区审核。当前工作仅添加流程文件，没有推送标签或创建 release。GitHub Actions 的远程执行尚未验证。
 

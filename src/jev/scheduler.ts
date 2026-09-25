@@ -23,7 +23,7 @@ export class SharedDecisionScheduler implements DecisionScheduler {
   private paused = false;
   private disposed = false;
   private reason: string | null = null;
-  private timer: ReturnType<typeof setTimeout> | undefined;
+  private timer: number | undefined;
   private lastAutomatic = -Infinity;
   private readonly interval: number;
   private readonly timeout: number;
@@ -64,7 +64,7 @@ export class SharedDecisionScheduler implements DecisionScheduler {
     this.paused = paused;
     this.reason = paused ? 'error.analysisPaused' : null;
     if (paused) {
-      if (this.timer) clearTimeout(this.timer);
+      if (this.timer) window.clearTimeout(this.timer);
       this.timer = undefined;
       if (this.active) this.fail(this.active, new OrganizerError('cancelled', 'error.analysisPausedSent'));
     }
@@ -74,7 +74,7 @@ export class SharedDecisionScheduler implements DecisionScheduler {
   dispose(): void {
     this.disposed = true;
     this.paused = true;
-    if (this.timer) clearTimeout(this.timer);
+    if (this.timer) window.clearTimeout(this.timer);
     this.timer = undefined;
     for (const job of this.queue.values()) this.fail(job, new OrganizerError('cancelled', 'error.analysisStopped'));
     this.queue.clear();
@@ -91,7 +91,7 @@ export class SharedDecisionScheduler implements DecisionScheduler {
   }
   private pump(): void {
     if (this.active || this.paused || this.disposed) return;
-    if (this.timer) clearTimeout(this.timer);
+    if (this.timer) window.clearTimeout(this.timer);
     this.timer = undefined;
     for (const [key, job] of this.queue) {
       if (!job.scope.isCurrent()) { this.queue.delete(key); this.fail(job, new OrganizerError('stale', 'error.analysisStale')); }
@@ -101,7 +101,7 @@ export class SharedDecisionScheduler implements DecisionScheduler {
     const jobs = [...this.queue.values()];
     const job = jobs.filter(item => readyTime(item) <= now).sort((a, b) => priority[a.scope.priority] - priority[b.scope.priority])[0];
     if (!job) {
-      if (jobs.length) this.timer = setTimeout(() => { this.timer = undefined; this.pump(); }, Math.max(1, Math.min(...jobs.map(readyTime)) - now));
+      if (jobs.length) this.timer = window.setTimeout(() => { this.timer = undefined; this.pump(); }, Math.max(1, Math.min(...jobs.map(readyTime)) - now));
       this.events.emit();
       return;
     }
@@ -112,7 +112,7 @@ export class SharedDecisionScheduler implements DecisionScheduler {
     void this.run(job);
   }
   private async run(job: Job): Promise<void> {
-    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let timeout: number | undefined;
     let reserved = false;
     let result: ChoiceBatchResult | undefined;
     let failure: OrganizerError | undefined;
@@ -125,7 +125,7 @@ export class SharedDecisionScheduler implements DecisionScheduler {
       assertCurrent(job.scope);
       if (job.settled || this.disposed || this.paused) throw new OrganizerError('cancelled', 'error.analysisStopped');
       if (job.scope.automatic) this.lastAutomatic = Date.now();
-      timeout = setTimeout(() => {
+      timeout = window.setTimeout(() => {
         this.reason = 'error.analysisTimeout';
         this.fail(job, new OrganizerError('timeout', this.reason));
         this.events.emit();
@@ -135,7 +135,7 @@ export class SharedDecisionScheduler implements DecisionScheduler {
       assertCurrent(job.scope);
     } catch (error) { failure = this.error(error); }
     finally {
-      if (timeout) clearTimeout(timeout);
+      if (timeout) window.clearTimeout(timeout);
       // After unload, retain the reservation as unknown. A late HTTP response
       // must not settle through a stale usage snapshot owned by the old instance.
       if (reserved && !this.disposed) {

@@ -7,7 +7,7 @@ interface Reference { readonly source: TFile; readonly category: typeof categori
 export interface ReferenceInspection { readonly issue: string | null; readonly references: readonly Reference[] }
 function updatesLinks(app: App): boolean {
   const vault: unknown = app.vault;
-  try { return typeof vault === 'object' && vault !== null && 'getConfig' in vault && typeof vault.getConfig === 'function' && vault.getConfig('alwaysUpdateLinks') === true; }
+  try { return typeof vault === 'object' && vault !== null && 'getConfig' in vault && typeof vault.getConfig === 'function' && (vault as { getConfig(key: string): unknown }).getConfig('alwaysUpdateLinks') === true; }
   catch { return false; }
 }
 export function inspectReferences(app: App, source: TFile, destination: string): ReferenceInspection {

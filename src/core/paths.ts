@@ -3,7 +3,7 @@ import { OrganizerError } from './errors';
 export function safePath(value: string, allowRoot = false): string {
   const path = value.trim().replace(/\\/g, '/');
   if (allowRoot && path === '') return '';
-  if (!path || path.startsWith('/') || /[\u0000-\u001f:]/.test(path) || path.split('/').some(part => !part || part === '.' || part === '..' || part.startsWith('.'))) {
+  if (!path || path.startsWith('/') || [...path].some(char => char === ':' || char.charCodeAt(0) < 0x20) || path.split('/').some(part => !part || part === '.' || part === '..' || part.startsWith('.'))) {
     throw new OrganizerError('unsafe', 'error.pathInvalid');
   }
   return path;

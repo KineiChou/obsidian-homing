@@ -62,14 +62,14 @@ class FilingPill {
   private feedback = '';
   private lastMove: { id: string; to: string } | null = null;
   private guardUntil = 0;
-  private guardTimer: ReturnType<typeof setTimeout> | undefined;
+  private guardTimer: number | undefined;
   private previousFile: unknown;
   private fileContext = {};
   private alive = true;
   constructor(private readonly surface: PillSurface, private readonly controller: OrganizerController, private readonly hostActions: PillHost, private readonly shared: { destinations: Map<string, ManualDestination>; changed(): void }) {
-    this.host = surface.parent.ownerDocument.createElement('div'); this.host.className = 'note-organizer note-organizer-pill-host';
+    this.host = surface.parent.createDiv({ cls: 'note-organizer note-organizer-pill-host' });
     this.host.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); this.toggle(false); this.surface.focusNote(); } });
-    surface.parent.classList.add('note-organizer-pill-parent'); surface.parent.appendChild(this.host);
+    surface.parent.classList.add('note-organizer-pill-parent');
     this.previousFile = this.file();
     this.unsubscribe = controller.subscribe(() => this.render()); this.render();
   }
@@ -107,7 +107,7 @@ class FilingPill {
     if (file !== this.previousFile) {
       this.previousFile = file; this.fileContext = {}; this.generation++;
       this.lastMove = null; this.plan = null; this.busy = false; this.feedback = ''; this.focusOnReady = false;
-      this.guardUntil = 0; clearTimeout(this.guardTimer);
+      this.guardUntil = 0; window.clearTimeout(this.guardTimer);
       if (this.opened) { this.opened = false; this.doc.removeEventListener('mousedown', this.outside, true); }
       this.signature = '';
     }
@@ -162,7 +162,7 @@ class FilingPill {
       ...(targetId ? [{ title: t('pill.reanalyze'), run: () => { this.controller.analyzeNote(entry.path); this.toggle(false); } }] : []),
       { title: t('organizer.ignore'), run: () => { this.controller.ignoreNote(entry.path); this.toggle(false); } },
     ])); more.setAttribute('aria-label', t('organizer.more')); more.dataset.action = 'more';
-    if (this.focusOnReady && !targetId) { this.focusOnReady = false; (actions.querySelector('button') as HTMLButtonElement | null)?.focus(); }
+    if (this.focusOnReady && !targetId) { this.focusOnReady = false; (actions.querySelector('button'))?.focus(); }
   }
   private async prepare(path: string, targetId: string, accept: HTMLButtonElement, status: HTMLElement): Promise<void> {
     const generation = ++this.generation; this.plan = null;
@@ -196,8 +196,8 @@ class FilingPill {
       if (!current()) return;
       this.lastMove = { id: plan.id, to: plan.destination };
       this.opened = false; this.doc.removeEventListener('mousedown', this.outside, true);
-      this.guardUntil = Date.now() + GUARD_MS; clearTimeout(this.guardTimer);
-      this.guardTimer = setTimeout(() => { this.signature = ''; this.render(); }, GUARD_MS);
+      this.guardUntil = Date.now() + GUARD_MS; window.clearTimeout(this.guardTimer);
+      this.guardTimer = window.setTimeout(() => { this.signature = ''; this.render(); }, GUARD_MS);
     } catch (error) { if (!current()) return; this.feedback = errorText(error); }
     this.busy = false; this.signature = ''; this.render();
   }
@@ -220,5 +220,5 @@ class FilingPill {
     if (this.feedback) node(group, 'span', this.feedback, 'note-organizer-feedback');
   }
   private restoreFocus(action: string | undefined): void { if (action) this.host.querySelector<HTMLElement>(`[data-action="${action}"]`)?.focus({ preventScroll: true }); }
-  destroy(): void { this.alive = false; this.generation++; clearTimeout(this.guardTimer); this.doc.removeEventListener('mousedown', this.outside, true); this.unsubscribe(); this.host.remove(); if (!this.surface.parent.querySelector('.note-organizer-pill-host')) this.surface.parent.classList.remove('note-organizer-pill-parent'); }
+  destroy(): void { this.alive = false; this.generation++; window.clearTimeout(this.guardTimer); this.doc.removeEventListener('mousedown', this.outside, true); this.unsubscribe(); this.host.remove(); if (!this.surface.parent.querySelector('.note-organizer-pill-host')) this.surface.parent.classList.remove('note-organizer-pill-parent'); }
 }

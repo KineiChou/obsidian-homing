@@ -10,6 +10,7 @@ import { linkHints, QUIET_MS } from '../src/ui/link-hints';
 import type { LinkPlan, LinkProposal, LinkTarget, TextRange } from '../src/linking/types';
 import type { LinkMention, OrganizerController } from '../src/ui/types';
 import { context, deferred, target } from './helpers';
+import { installDomHelpers } from './setup';
 
 const cleanup: (() => void)[] = [];
 beforeEach(() => { setLocale('en'); vi.useFakeTimers(); });
@@ -116,6 +117,7 @@ it('accepts a clear mention at the cursor through the command and opens the card
 it('popout hover uses the popout DOM realm', async () => {
   const frame = document.createElement('iframe'); document.body.append(frame);
   const doc = frame.contentDocument!; const win = frame.contentWindow!;
+  installDomHelpers(win as unknown as Window & typeof globalThis);
   const f = fixture('marker', doc.body);
   const mark = f.view.contentDOM.querySelector('.note-organizer-link-marker')!;
   expect(mark instanceof Element).toBe(false);

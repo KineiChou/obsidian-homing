@@ -39,9 +39,17 @@ export function cjkBoundaryChecker(text: string): ((at: number) => boolean) | nu
     return run.boundaries.has(at - start);
   };
 }
-const COMPLEX = /[\p{M}\u200d\ud800-\udfff\u{10000}-\u{10ffff}\ufe0e\ufe0f\r]/u;
+const MARK = /\p{M}/u;
+/** True when grapheme boundaries differ from code units: surrogates, joiners, variation selectors, CR or combining marks. */
+function complex(text: string): boolean {
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if ((code >= 0xd800 && code <= 0xdfff) || code === 0x200d || code === 0xfe0e || code === 0xfe0f || code === 0x0d) return true;
+  }
+  return MARK.test(text);
+}
 /** Null means every offset is a grapheme boundary (no marks, joiners, surrogates or CRLF). */
-export function graphemeBoundariesIfComplex(text: string): Set<number> | null { return COMPLEX.test(text) ? graphemeBoundaries(text) : null; }
+export function graphemeBoundariesIfComplex(text: string): Set<number> | null { return complex(text) ? graphemeBoundaries(text) : null; }
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 export function graphemeBoundaries(text: string): Set<number> {

@@ -21,8 +21,8 @@ export default class NoteOrganizerPlugin extends Plugin {
     const organizer = new ObsidianOrganizer(this);
     this.organizer = organizer;
     try { await organizer.initialize(); }
-    catch (error) { organizer.dispose(); if (this.lifecycle === lifecycle) { this.organizer = null; new Notice(errorText(error)); } return; }
-    if (this.lifecycle !== lifecycle || this.organizer !== organizer) { organizer.dispose(); return; }
+    catch (error) { void organizer.dispose(); if (this.lifecycle === lifecycle) { this.organizer = null; new Notice(errorText(error)); } return; }
+    if (this.lifecycle !== lifecycle || this.organizer !== organizer) { void organizer.dispose(); return; }
     // Earlier versions opened an organizer tab; restored layouts close it instead of showing an error view.
     this.registerView(REVIEW_VIEW, leaf => new RetiredReviewView(leaf, REVIEW_VIEW));
     this.registerView(LEGACY_REVIEW_VIEW, leaf => new RetiredReviewView(leaf, LEGACY_REVIEW_VIEW));
@@ -34,7 +34,7 @@ export default class NoteOrganizerPlugin extends Plugin {
     const pills = filingPills(organizer, {
       chooseDestination,
       menu: (anchor, items) => {
-        const menu = new Menu(); for (const item of items) menu.addItem(value => value.setTitle(item.title).onClick(item.run));
+        const menu = new Menu(); for (const item of items) menu.addItem(value => value.setTitle(item.title).onClick(() => item.run()));
         const rect = anchor.getBoundingClientRect(); menu.showAtPosition({ x: rect.left, y: rect.bottom }, anchor.ownerDocument);
       },
     });
@@ -104,5 +104,5 @@ export default class NoteOrganizerPlugin extends Plugin {
     this.app.workspace.onLayoutReady(sync);
     this.register(() => { for (const detach of attached.values()) detach(); attached.clear(); });
   }
-  onunload(): void { this.lifecycle++; this.organizer?.dispose(); this.organizer = null; }
+  onunload(): void { this.lifecycle++; void this.organizer?.dispose(); this.organizer = null; }
 }

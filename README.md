@@ -4,7 +4,7 @@
 
 A desktop Obsidian plugin that suggests folders for inbox notes and internal links while you write. Review suggestions before applying them: moving notes and inserting links always require your confirmation.
 
-This is a **0.2.5 development preview**, not a community-store release. Homing was previously developed as *Note Organizer*. Requires **Obsidian 1.11.4+ on desktop**. Mobile support is not claimed.
+Current version: **0.2.5**, the first public release. Homing was previously developed as *Note Organizer*. Requires **Obsidian 1.11.4+ on desktop**. Mobile support is not claimed.
 
 ## Get started
 
@@ -54,7 +54,7 @@ One inbox, Markdown notes, desktop only. Link discovery starts from filenames an
 
 Moves that cannot preserve references safely are refused. If a move has already occurred but link updates cannot be verified, its record requires review; the plugin does not automatically move it back. Move undo is limited to the current plugin session. Restart recovery archives resolved operations and leaves ambiguous moves for review.
 
-Automated tests cover domain logic and editor/HTTP/UI substitutes. In an Obsidian 1.13.7 synthetic vault, host checks covered folder selection, a move with incoming and outgoing links, both link updates, move undo, filing-banner actions, and two link insertions restored by one native Undo. The batch-link check used a local mock HTTP response, not a real model. Paired Jev evaluations used synthetic examples. A real local Ollama `qwen3:1.7b` returned four valid responses but made one incorrect filing choice; its native connection check passed. This verifies protocol compatibility, not recommendation quality in real writing workflows. Other host versions remain unverified. See the [Ollama results](docs/ollama-acceptance.md). See [validation scope](docs/validation.md) and [release requirements](docs/releasing.md).
+Automated tests cover domain logic and editor/HTTP/UI substitutes. In an Obsidian 1.13.7 synthetic vault, host checks covered folder selection, a move with incoming and outgoing links, both link updates, move undo, filing-banner actions, and two link insertions restored by one native Undo. The batch-link check used a local mock HTTP response, not a real model. Paired Jev evaluations used synthetic examples. A real local Ollama `qwen3:1.7b` returned four valid responses but made one incorrect filing choice; its native connection check passed. This verifies protocol compatibility, not recommendation quality in real writing workflows. The project owner completed the host acceptance checklist for 0.2.5 on 2026-09-25 ([#15](https://github.com/KineiChou/obsidian-homing/issues/15)). Other host versions remain unverified. See the [Ollama results](docs/ollama-acceptance.md). See [validation scope](docs/validation.md) and [release requirements](docs/releasing.md).
 
 ## Development
 

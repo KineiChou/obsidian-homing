@@ -28,7 +28,8 @@ class MarkerWidget extends WidgetType {
   constructor(private readonly ids: readonly string[]) { super(); }
   eq(other: MarkerWidget): boolean { return other.ids.join() === this.ids.join(); }
   toDOM(view: EditorView): HTMLElement {
-    const marker = view.dom.ownerDocument.createElement('span'); marker.className = 'note-organizer-link-marker';
+    // Obsidian installs its DOM helpers in every window; use the editor's own so popout widgets stay in their realm.
+    const marker = (view.dom.ownerDocument.win as Window & { createSpan: typeof createSpan }).createSpan({ cls: 'note-organizer-link-marker' });
     marker.setAttribute(ATTRIBUTE, this.ids.join(' ')); marker.setAttribute('aria-label', t('hint.marker', { count: this.ids.length }));
     setIcon(marker, 'link'); return marker;
   }
@@ -58,10 +59,10 @@ class LinkHintView {
   decorations: DecorationSet = Decoration.none;
   private mentions: LinkMention[] = [];
   private typingUntil = 0;
-  private quietTimer: ReturnType<typeof setTimeout> | undefined;
-  private hoverTimer: ReturnType<typeof setTimeout> | undefined;
-  private leaveTimer: ReturnType<typeof setTimeout> | undefined;
-  private cursorTimer: ReturnType<typeof setTimeout> | undefined;
+  private quietTimer: number | undefined;
+  private hoverTimer: number | undefined;
+  private leaveTimer: number | undefined;
+  private cursorTimer: number | undefined;
   private card: HTMLElement | null = null;
   private cardMentions: LinkMention[] = [];
   private readonly overrides = new Map<string, number>();
@@ -113,7 +114,7 @@ class LinkHintView {
     if (update.docChanged) {
       this.typingUntil = Date.now() + QUIET_MS; this.closeCard();
       this.checks.clear(); this.overrides.clear(); this.feedback.clear();
-      clearTimeout(this.quietTimer); this.quietTimer = setTimeout(() => this.requestRefresh(), QUIET_MS + 10);
+      window.clearTimeout(this.quietTimer); this.quietTimer = window.setTimeout(() => this.requestRefresh(), QUIET_MS + 10);
     }
     const refreshed = update.transactions.some(transaction => transaction.effects.some(effect => effect.is(refresh)));
     if (update.docChanged || update.viewportChanged || refreshed || update.focusChanged) {
@@ -121,7 +122,7 @@ class LinkHintView {
       // Moving focus to a card action must preserve the button through mouseup.
       if (this.card && refreshed) this.renderCard();
     }
-    if (update.focusChanged && !this.view.hasFocus) clearTimeout(this.cursorTimer);
+    if (update.focusChanged && !this.view.hasFocus) window.clearTimeout(this.cursorTimer);
     if (update.selectionSet && !update.docChanged) this.watchCursor();
   }
   private idsAt(target: EventTarget | null): string[] {
@@ -131,20 +132,20 @@ class LinkHintView {
   hover(event: MouseEvent): void {
     const ids = this.idsAt(event.target);
     if (!ids.length) return;
-    clearTimeout(this.leaveTimer); clearTimeout(this.hoverTimer);
+    window.clearTimeout(this.leaveTimer); window.clearTimeout(this.hoverTimer);
     const element = (event.target as Element).closest(`[${ATTRIBUTE}]`)!;
-    this.hoverTimer = setTimeout(() => this.openCard(ids, element.getBoundingClientRect()), HOVER_MS);
+    this.hoverTimer = window.setTimeout(() => this.openCard(ids, element.getBoundingClientRect()), HOVER_MS);
   }
   leave(event: MouseEvent): void {
     if (!this.idsAt(event.target).length) return;
-    clearTimeout(this.hoverTimer);
+    window.clearTimeout(this.hoverTimer);
     if (this.card && isNode(event.relatedTarget) && this.card.contains(event.relatedTarget)) return;
-    this.leaveTimer = setTimeout(() => this.closeCard(), LEAVE_MS);
+    this.leaveTimer = window.setTimeout(() => this.closeCard(), LEAVE_MS);
   }
   private watchCursor(): void {
-    clearTimeout(this.cursorTimer);
+    window.clearTimeout(this.cursorTimer);
     if (!this.view.hasFocus || this.style() !== 'underline') return;
-    this.cursorTimer = setTimeout(() => {
+    this.cursorTimer = window.setTimeout(() => {
       if (!this.alive || !this.view.hasFocus || this.style() !== 'underline') return;
       const mention = this.atCursor();
       if (!mention) { if (this.card && !this.card.matches(':hover')) this.closeCard(); return; }
@@ -174,8 +175,8 @@ class LinkHintView {
     const doc = this.view.dom.ownerDocument;
     if (!this.card) {
       this.card = node(doc.body, 'div', undefined, 'note-organizer note-organizer-hint-card'); this.card.setAttribute('role', 'dialog'); this.card.setAttribute('aria-label', t('hint.label'));
-      this.card.addEventListener('mouseleave', () => { this.leaveTimer = setTimeout(() => this.closeCard(), LEAVE_MS); });
-      this.card.addEventListener('mouseenter', () => clearTimeout(this.leaveTimer));
+      this.card.addEventListener('mouseleave', () => { this.leaveTimer = window.setTimeout(() => this.closeCard(), LEAVE_MS); });
+      this.card.addEventListener('mouseenter', () => window.clearTimeout(this.leaveTimer));
       doc.addEventListener('keydown', this.keydown, true);
     }
     this.cardMentions = mentions; this.renderCard();
@@ -261,14 +262,14 @@ class LinkHintView {
     this.cardMentions = this.cardMentions.filter(item => idOf(item) !== idOf(mention)); this.renderCard();
   }
   private closeCard(): void {
-    clearTimeout(this.hoverTimer); clearTimeout(this.leaveTimer); clearTimeout(this.cursorTimer);
+    window.clearTimeout(this.hoverTimer); window.clearTimeout(this.leaveTimer); window.clearTimeout(this.cursorTimer);
     if (!this.card) return;
     this.view.dom.ownerDocument.removeEventListener('keydown', this.keydown, true);
     this.card.remove(); this.card = null; this.cardMentions = [];
   }
   destroy(): void {
     this.alive = false; this.closeCard(); this.unsubscribe(); this.release();
-    clearTimeout(this.quietTimer);
+    window.clearTimeout(this.quietTimer);
     this.view.scrollDOM.removeEventListener('scroll', this.scrolled);
   }
 }
