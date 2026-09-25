@@ -10,11 +10,12 @@ export type FilingStatus = 'waiting' | 'analyzing' | 'ready' | 'unassigned' | 'f
 export interface FilingEntry { readonly excerpt?: ProposalExcerpt; readonly path: string; readonly status: FilingStatus; readonly updatedAt: number; readonly message: string | null; readonly proposal?: FilingProposal; readonly moveRecordId?: string }
 export interface PersistedFilingProposal { readonly contentHash: string; readonly selectedPath: string | null; readonly ranked: readonly { readonly path: string; readonly probability: number }[]; readonly modelId: string; readonly promptRevision: number; readonly settingsFingerprint: string; readonly createdAt: number; readonly excerpt?: ProposalExcerpt }
 export interface PersistedFilingEntry { readonly path: string; readonly status: 'pending' | 'ignored'; readonly proposal?: PersistedFilingProposal }
+export type FilingContentSource = 'saved' | 'editor';
 export interface InboxQueue {
   entries(): readonly FilingEntry[];
   restore(entries: readonly PersistedFilingEntry[]): Promise<void>;
   touch(path: string, automatic: boolean): void;
-  analyze(path: string): void;
+  analyze(path: string, contentSource?: FilingContentSource): void;
   remove(path: string): void;
   rename(oldPath: string, newPath: string): void;
   ignore(path: string): void;
@@ -30,7 +31,7 @@ export interface InboxQueueDependencies {
   eligible(path: string): boolean;
   automaticEnabled(): boolean;
   isEditing(path: string): boolean;
-  propose(path: string, automatic: boolean, isCurrent: () => boolean): Promise<FilingProposal>;
+  propose(path: string, automatic: boolean, isCurrent: () => boolean, contentSource: FilingContentSource): Promise<FilingProposal>;
   persist(entries: readonly PersistedFilingEntry[]): Promise<void>;
   encodeProposal?(proposal: FilingProposal): PersistedFilingProposal | undefined;
   restoreProposal?(path: string, proposal: PersistedFilingProposal): Promise<FilingProposal | null>;

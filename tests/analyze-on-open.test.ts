@@ -8,10 +8,10 @@ import { HistoryModal } from '../src/ui/history-modal';
 import { renderSettings } from '../src/ui/settings-tab';
 import type { OrganizerController } from '../src/ui/types';
 import type { MoveRecord } from '../src/filing/types';
-import { FakeApp, Plugin, TFolder } from './fakes/obsidian';
+import { FakeApp, Plugin, requestUrl, TFolder } from './fakes/obsidian';
 
 const disposals: (() => void)[] = [];
-beforeEach(() => setLocale('en'));
+beforeEach(() => { setLocale('en'); requestUrl.mockResolvedValue({ status: 401, headers: {}, json: {} }); });
 afterEach(() => { for (const dispose of disposals.splice(0)) dispose(); document.body.replaceChildren(); vi.restoreAllMocks(); });
 async function fixture(settings: Partial<typeof DEFAULT_SETTINGS> = {}) {
   const app = new FakeApp(); app.files.set('Inbox', new TFolder('Inbox')); app.files.set('Resources', new TFolder('Resources'));
@@ -19,14 +19,14 @@ async function fixture(settings: Partial<typeof DEFAULT_SETTINGS> = {}) {
   const plugin = new Plugin(app); plugin.data = { schemaVersion: 2, settings: { ...DEFAULT_SETTINGS, inbox: 'Inbox', secretName: 'key', ...settings }, filingQueue: [], moveJournal: [] };
   const controller = new ObsidianOrganizer(plugin as unknown as ObsidianPlugin); await controller.initialize();
   disposals.push(() => { void controller.dispose(); plugin.unload(); });
-  const analyze = vi.spyOn(controller, 'analyzeNote').mockImplementation(() => undefined);
+  const analyze = vi.spyOn(controller.vault, 'note');
   return { app, controller, note, other, analyze };
 }
 
 it('analyzes an inbox note without a suggestion once when it is opened', async () => {
   const f = await fixture(); f.controller.setEnabled(true);
   f.app.workspace.emit('file-open', f.other); expect(f.analyze).not.toHaveBeenCalled();
-  f.app.workspace.emit('file-open', f.note); expect(f.analyze).toHaveBeenCalledExactlyOnceWith('Inbox/Waiting.md');
+  f.app.workspace.emit('file-open', f.note); await vi.waitFor(() => expect(f.analyze).toHaveBeenCalledExactlyOnceWith('Inbox/Waiting.md', false));
   f.app.workspace.emit('file-open', f.note); expect(f.analyze).toHaveBeenCalledOnce();
 });
 
