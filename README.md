@@ -4,7 +4,7 @@
 
 A desktop Obsidian plugin that suggests folders for inbox notes and internal links while you write. Review suggestions before applying them: moving notes and inserting links always require your confirmation.
 
-This is a **0.2.3 development preview**, not a community-store release. Note Organizer is a working name; the final name, author attribution and license remain undecided. Requires **Obsidian 1.11.4+ on desktop**. Mobile support is not claimed.
+This is a **0.2.4 development preview**, not a community-store release. Note Organizer is a working name; the final name, author attribution and license remain undecided. Requires **Obsidian 1.11.4+ on desktop**. Mobile support is not claimed.
 
 ## Get started
 
@@ -26,15 +26,18 @@ Only the **active provider** receives analysis requests:
 | Provider | Default destination |
 | --- | --- |
 | TypeSafe Jev | `https://api.typesafe.ai/v1/systemone` |
+| OpenRouter | `https://openrouter.ai/api/v1/chat/completions` |
 | OpenAI-compatible | `https://api.openai.com/v1/chat/completions` |
 | Anthropic | `https://api.anthropic.com/v1/messages` |
 | Ollama | `http://127.0.0.1:11434/v1/chat/completions` |
+
+For **OpenRouter**, select it as the analysis provider, link an OpenRouter API key, and use a full model ID such as the default `openai/gpt-4.1-mini`. Choose a model that supports [structured outputs](https://openrouter.ai/docs/guides/features/structured-outputs). The plugin requires a route that supports its structured response parameters. Switching providers clears the selected key; choose the new service's key before checking the connection.
 
 Compatible providers accept a custom base URL. For a local Ollama installation, select **Ollama**, supply its base URL and an installed model ID, and leave the saved key blank. Its default model is `qwen3:1.7b`; remote endpoints still require a key. The plugin does not install or start a model service. A local endpoint receives the same content described below; whether it forwards that content elsewhere depends on that service. No provider fallback silently sends notes to a different service.
 
 What an analysis request can contain:
 
-- **Filing:** the current note's title, tags, and body without its frontmatter block; candidate folder paths, configured purposes and inherited rules. The default long-note policy extracts a bounded excerpt locally, using headings, the opening and section starts. It does not call a separate summarization model. Full-body mode sends the body when it fits the request budget and refuses oversized requests.
+- **Filing:** the current note's title, tags, and body without its frontmatter block; candidate folder paths, configured purposes and inherited rules. Analysis on opening reads that note's saved content; manual analysis of the active note can include unsaved editor text. The default long-note policy extracts a bounded excerpt locally, using headings, the opening and section starts. It does not call a separate summarization model. Full-body mode sends the body when it fits the request budget and refuses oversized requests.
 - **Optional folder profiles:** when enabled, candidate descriptions may also include sampled titles and tags from other notes in each folder. These profiles do not send those notes' bodies. This option is off by default.
 - **Link suggestions:** clear title and alias matches are found and shown locally, without any request. Only when you hover an ambiguous suggestion, pause while typing `[[?`, run the find-links command, or turn on background checks is the mention sent with its local sentence (or line), the source note path, and candidate notes' paths, titles, aliases, tags and description/summary metadata. This can include unsaved editor text. Turn off **Check ambiguous links on request** to never send hover or `[[?` requests. The link index does not send every note's full body or create embeddings.
 - **Connection tests:** a fixed synthetic example, without vault text.

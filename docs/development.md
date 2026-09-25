@@ -16,13 +16,15 @@
 - `filing/classifier.ts` 导出 `MixedDepthClassifier implements FolderClassifier`，构造参数 `DecisionScheduler`，可选配置 getter 返回 `longNoteStrategy` 与 `profiles`。
 - `filing/note-excerpt.ts` 的 `prepareNote(note, strategy)` 返回 `{ note, excerpt? }`；源指纹始终对应完整原文。
 - `folders/profiles.ts` 的 `MemoryFolderProfiles` 仅保存内存元数据，提供 `upsert/remove/clear/enrich/prefilter`；默认不将画像附入请求。
-- `providers/client.ts` 的 `createDecisionClient(transport, secrets, settingsGetter)` 返回统一 `DecisionClient`，按 `provider/endpoint` 路由 Jev、OpenAI-compatible、Anthropic 或显式 Ollama。只有 Ollama 使用按问题 ID 和候选生成的 JSON Schema；所有排名提供方仍由同一严格解析器检查完整、唯一的候选 ID 及首位一致性。
+- `providers/client.ts` 的 `createDecisionClient(transport, secrets, settingsGetter)` 返回统一 `DecisionClient`，按 `provider/endpoint` 路由 Jev、OpenRouter、OpenAI-compatible、Anthropic 或显式 Ollama。OpenRouter 和 Ollama 使用按问题 ID 和候选生成的 JSON Schema；OpenRouter 还要求 `provider.require_parameters`，并识别 HTTP 200 内的服务错误。所有排名提供方仍由同一严格解析器检查完整、唯一的候选 ID 及首位一致性。
 - `linking/recommender.ts` 导出 `JevLinkRecommender implements LinkRecommender`，构造参数 `DecisionScheduler`，内存缓存有界。
 - `linking/metadata-index.ts` 导出 `MemoryMetadataIndex implements MetadataIndex`，无参构造，压缩前缀树可独立成领域内文件。
 - `linking/mention-matcher.ts` 导出 `LocalMentionMatcher implements MentionMatcher`，构造参数 `MetadataIndex`。
 - `linking/link-service.ts` 导出 `ConfirmedLinkService implements LinkService`，构造参数 `MetadataIndex, LinkHost`。
 
 `RequestScope.isCurrent` 贯穿排队、批次、响应；逻辑超时不释放实际网络名额。确认计划严格校验源内容、目标和相关版本；已经得到的归档建议则可以在无关目录变化后保留并映射到新目录版本。归档与补链配置版本分开；额度、自动链接开关等无关设置不清空归档结果，仅排除路径变化重建元数据索引。
+
+`InboxQueue.analyze(path, contentSource)` 将读取来源与调度优先级分开：打开笔记使用 `saved`，避免宿主已更新文件身份但编辑器仍保留上篇正文；手动分析默认 `editor`，保留未保存内容。请求入队即为 `analyzing`，包含等待网络名额的时间。打开时仅分析无建议的 `waiting` 项；进行中和已完成项依靠队列状态去重，取消后恢复等待的项可再次打开分析，不另用尝试记录阻断。
 
 ## 持久化与恢复
 
@@ -52,7 +54,7 @@ Node 22.12+；使用 npm 11 验证 `npx --yes npm@11 ci --ignore-scripts`，再�
 
 控制器返回的 `LinkMention.verdictKey` 绑定源路径、句子、句内位置、候选身份与版本及模型配置。悬停请求和确认前都重新校验当前提及；UI 按该键保存判断状态，正文变化关闭旧卡片，失败可在重新打开后重试。`verifyLinkQuery` 要求调用方提供实时 `isCurrent()`；查询关闭、正文或设置变化会取消待发请求并拒绝晚到响应。`linkMarkdown` 接收完整 `LinkTarget` 并核对身份、版本与路径，防止旧路径被新文件占用后插错目标。所有查询、发送和插入均执行源笔记范围限制。
 
-胶囊准备失败只更新当前面板的错误，不通过重新渲染触发新准备；撤销失败仍保留可重试入口。链接卡片在焦点变化时保留操作节点；DOM 检查兼容其他窗口，延迟光标提示再次核对焦点。Notebook Navigator 菜单按 API 对象身份重绑，卸载后迟到的布局回调不得注册菜单或胶囊；卸载同时关闭 `LinkQuerySuggest`，取消其延迟请求。
+胶囊准备失败只更新当前面板的错误，不通过重新渲染触发新准备；撤销失败仍保留可重试入口。切换文件时清理计划、忙碌状态和反馈；异步移动／撤销回调同时校验文件对象与本次显示上下文，切走再切回也不能显示旧反馈。同一对象因移动而改名仍保留完成状态。链接卡片在焦点变化时保留操作节点；DOM 检查兼容其他窗口，延迟光标提示再次核对焦点。Notebook Navigator 菜单按 API 对象身份重绑，卸载后迟到的布局回调不得注册菜单或胶囊；卸载同时关闭 `LinkQuerySuggest`，取消其延迟请求。
 
 胶囊归档成功后提供撤销与同窗格的下一篇，两者有 400 ms 防连击；分值接近时可显示两个改选目录，不展示模型概率。计划准备均有异步代次检查，重渲染按签名跳过并恢复操作焦点。任何入口都不能凭模型响应直接写入；实际交互以 [交互文档](interaction-design.md) 为准。
 
