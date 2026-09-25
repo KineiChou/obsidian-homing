@@ -1,7 +1,7 @@
 {
   "id": "homing",
   "name": "Homing",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "minAppVersion": "1.11.4",
   "description": "File inbox notes into existing folders and link mentions to the right notes, with your confirmation, right in the editor.",
   "author": "KineiChou",
