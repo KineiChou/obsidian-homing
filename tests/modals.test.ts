@@ -21,6 +21,23 @@ it('requires explicit batch confirmation and passes exactly the selected newest 
   [...modal.contentEl.querySelectorAll('button')].find(button => button.textContent === 'Analyze 1 notes')!.click();
   expect(controller.analyzeInbox).toHaveBeenCalledExactlyOnceWith(['Inbox/new.md']); expect(modal.contentEl.isConnected).toBe(false);
 });
+it('summarizes the batch as compact stats with a single estimate when the range is one value', () => {
+  const preview = (min: number, max: number) => ({ notes: [{ path: 'Inbox/Sub/New idea.md', modifiedAt: Date.UTC(2026, 8, 25) }], requestsPerNote: { min, max }, remainingRequests: 0, recommendedCount: 1 });
+  let range = preview(1, 1);
+  const controller = { settings: () => DEFAULT_SETTINGS, previewAnalysis: () => range, analyzeInbox: vi.fn() } as unknown as OrganizerController;
+  const modal = new AnalysisModal(app, controller); modal.open();
+  const stats = () => [...modal.contentEl.querySelectorAll('.note-organizer-stat')].map(item => item.textContent);
+  expect(stats()).toEqual(['1 notes', 'About 1 request per note', '0 requests left today']);
+  expect(modal.contentEl.querySelector('.note-organizer-stat.is-warning')).not.toBeNull();
+  expect(modal.contentEl.querySelector('.note-organizer-analysis-title')?.textContent).toBe('New idea');
+  expect(modal.contentEl.querySelector('.note-organizer-analysis-meta')?.textContent).toBe('Inbox › Sub');
+  expect(modal.contentEl.querySelector('.note-organizer-analysis-count')?.textContent).toBe('1 of 1 selected');
+  expect([...modal.contentEl.querySelectorAll('button')].find(button => button.textContent === 'Analyze 1 notes')!.disabled).toBe(true);
+  modal.close(); range = preview(2, 3);
+  const next = new AnalysisModal(app, controller); next.open();
+  expect(next.contentEl.querySelectorAll('.note-organizer-stat')[1]?.textContent).toBe('About 2–3 requests per note');
+  next.close();
+});
 it('does not start analysis when batch confirmation is cancelled', () => {
   const controller = { settings: () => DEFAULT_SETTINGS, previewAnalysis: () => ({ notes: [], requestsPerNote: { min: 1, max: 1 }, remainingRequests: 0, recommendedCount: 0 }), analyzeInbox: vi.fn() } as unknown as OrganizerController;
   const modal = new AnalysisModal(app, controller); modal.open(); modal.close(); expect(controller.analyzeInbox).not.toHaveBeenCalled();
