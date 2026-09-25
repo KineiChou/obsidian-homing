@@ -167,7 +167,7 @@ export const zh = {
   "settings.historyEmpty": "暂无移动记录。",
   "explorer.count": "{count} 条归档建议",
   "settings.analyzeOnOpen": "打开收件箱笔记时分析",
-  "settings.analyzeOnOpenHelp": "打开一篇还没有建议的收件箱笔记时，分析这篇笔记已保存的内容。需要开启自动准备归档建议。",
+  "settings.analyzeOnOpenHelp": "打开尚无建议目录的收件箱笔记时，分析已保存的内容；上次失败的笔记也会重试。需要开启自动准备归档建议。",
   "settings.usageHeading": "用量与发送内容",
   "settings.add": "添加…",
   "settings.remove": "移除",
