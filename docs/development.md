@@ -75,7 +75,7 @@ Obsidian 1.13.7 合成库已验证目录选择不冻结、带入出链移动及�
 ## 开发命令和交付
 
 - `npm run check`：类型、Lint、领域测试、编辑器／UI／端口集成、生产构建。
-- `npm run package`：构建后复制三个安装文件到 `dist/note-organizer/`。
+- `npm run package`：构建后复制三个安装文件及 `LICENSE`、`NOTICE` 到 `dist/homing/`。
 - `node --expose-gc benchmarks/metadata-index.mjs`：20,000 篇、每篇两个词条的实际索引；末尾传 `2` 改为每篇三个词条。
 
 自动化测试中 Obsidian 模块映射到测试端口；生产 esbuild 不使用该映射。真实 CM6 与标准 Markdown 解析器参与测试，但不能替代 Obsidian 私有语法和宿主撤销测试。精确依赖版本保存在锁文件。

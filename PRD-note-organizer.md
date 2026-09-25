@@ -1,4 +1,4 @@
-# Note Organizer 产品需求
+# Homing（归位）产品需求
 
 状态：0.1.0 开发预览已实现归档建议和标题／别名链接建议。本文保留产品要求及待验证假设；当前实现、已完成测试和未覆盖能力见 [技术设计](docs/technical-design.md) 与 [验证记录](docs/validation.md)。
 
@@ -160,7 +160,7 @@ TypeSafe 声明不使用输入训练模型，但其一般隐私政策允许为�
 
 **单独评估的能力：** 高置信度自动移动、创建新目录、重命名笔记、附件搬运、历史知识库重组、自动学习规则。这些都会改变用户对插件权限和行为的理解，不应混入首版。
 
-插件工作名称为 Note Organizer，独立于现有 Vim 插件。技术设计选用 TypeScript、esbuild、Obsidian 原生 UI 与 CodeMirror 6；设计最低 Obsidian 版本为 1.11.4，凭据通过 SecretStorage 管理。发布前确定名称、许可证并验证最低版本兼容性。模块接口与实现边界见 [技术设计](docs/technical-design.md)。
+插件正式名称为 Homing（归位，开发阶段曾用名 Note Organizer），独立于现有 Vim 插件。技术设计选用 TypeScript、esbuild、Obsidian 原生 UI 与 CodeMirror 6；设计最低 Obsidian 版本为 1.11.4，凭据通过 SecretStorage 管理。发布前确定名称、许可证并验证最低版本兼容性。模块接口与实现边界见 [技术设计](docs/technical-design.md)。
 
 ## 8. 验收与假设验证
 

@@ -1,14 +1,16 @@
-# Note Organizer
+# Homing（归位）
 
 [English](README.md)
 
 Obsidian 桌面插件：为收件箱笔记推荐目录，并在写作时建议内部链接。移动笔记和插入链接都须经你确认。
 
-当前为**0.2.5 开发预览**，尚未发布到社区插件市场。Note Organizer 是工作名称，正式名称、作者署名和许可证待定。需要 **Obsidian 1.11.4+ 桌面版**，不承诺移动端支持。
+当前为**0.2.5 开发预览**，尚未发布到社区插件市场。开发阶段曾用名 *Note Organizer*。需要 **Obsidian 1.11.4+ 桌面版**，不承诺移动端支持。
 
 ## 开始使用
 
-按下方命令构建，将 `dist/note-organizer/` 中的 `main.js`、`manifest.json`、`styles.css` 复制到测试知识库的 `.obsidian/plugins/note-organizer/`，再在社区插件设置中启用。
+按下方命令构建，将 `dist/homing/` 中的 `main.js`、`manifest.json`、`styles.css` 复制到测试知识库的 `.obsidian/plugins/homing/`，再在社区插件设置中启用。
+
+从 *Note Organizer* 预览版升级：首次启动时，若 Homing 自己的目录还没有数据，会从 `.obsidian/plugins/note-organizer/` 导入设置、待处理建议和移动记录，只读取、不修改旧目录。完成后请停用并删除旧插件，避免两者同时运行。
 
 1. 在设置中选择收件箱与分析服务，配置自己的服务凭据，或连接兼容的本地服务。
 2. 用固定合成示例测试连接，再启用归档建议。分析已有收件箱笔记前，核对范围与预计请求数。
@@ -65,4 +67,10 @@ npm run check
 npm run package
 ```
 
-`npm run package` 输出 `dist/note-organizer/`，不安装到知识库，也不发布。开发监视使用 `npm run dev`。参见[模块契约](docs/development.md)、[交互设计](docs/interaction-design.md)、[目录分类](docs/folder-classification.md)、[链接建议](docs/link-suggestions.md)与[双链匹配算法](docs/link-matching.md)（基准：`npm run benchmark:links`）。
+`npm run package` 输出 `dist/homing/`（包含 `LICENSE` 与 `NOTICE`），不安装到知识库，也不发布。开发监视使用 `npm run dev`。参见[模块契约](docs/development.md)、[交互设计](docs/interaction-design.md)、[目录分类](docs/folder-classification.md)、[链接建议](docs/link-suggestions.md)与[双链匹配算法](docs/link-matching.md)（基准：`npm run benchmark:links`）。
+
+## 许可证
+
+Copyright 2026 KineiChou。以 [Apache License 2.0](LICENSE) 授权。
+
+任何人都可以使用、修改和再发布 Homing（包括修改版）。再发布时须保留版权声明和署名 KineiChou 的 [NOTICE](NOTICE) 文件，附上许可证，并注明修改了哪些文件。

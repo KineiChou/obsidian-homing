@@ -1,14 +1,16 @@
-# Note Organizer
+# Homing（归位）
 
 [简体中文](README.zh-CN.md)
 
 A desktop Obsidian plugin that suggests folders for inbox notes and internal links while you write. Review suggestions before applying them: moving notes and inserting links always require your confirmation.
 
-This is a **0.2.5 development preview**, not a community-store release. Note Organizer is a working name; the final name, author attribution and license remain undecided. Requires **Obsidian 1.11.4+ on desktop**. Mobile support is not claimed.
+This is a **0.2.5 development preview**, not a community-store release. Homing was previously developed as *Note Organizer*. Requires **Obsidian 1.11.4+ on desktop**. Mobile support is not claimed.
 
 ## Get started
 
-Build with the commands below, then copy `main.js`, `manifest.json` and `styles.css` from `dist/note-organizer/` into a test vault's `.obsidian/plugins/note-organizer/`. Enable it in Obsidian's community plugin settings.
+Build with the commands below, then copy `main.js`, `manifest.json` and `styles.css` from `dist/homing/` into a test vault's `.obsidian/plugins/homing/`. Enable it in Obsidian's community plugin settings.
+
+Upgrading from a *Note Organizer* preview: on first start, Homing imports the settings, pending suggestions and move history from `.obsidian/plugins/note-organizer/` if its own folder is empty. It only reads the old folder. Disable and remove the old plugin afterwards so the two do not run side by side.
 
 1. Choose an inbox and an analysis provider in settings. Supply your own service credentials, or configure a compatible local service.
 2. Test the connection with a fixed synthetic example, then enable filing suggestions. Review the scope and estimated requests before analyzing existing inbox notes.
@@ -65,4 +67,10 @@ npm run check
 npm run package
 ```
 
-`npm run package` builds `dist/note-organizer/`; it does not install into a vault or publish anything. `npm run dev` watches source files. See [development contracts](docs/development.md), [interaction design](docs/interaction-design.md), [folder classification](docs/folder-classification.md), [link suggestions](docs/link-suggestions.md) and the [link matching algorithm](docs/link-matching.md) (`npm run benchmark:links`).
+`npm run package` builds `dist/homing/` (including `LICENSE` and `NOTICE`); it does not install into a vault or publish anything. `npm run dev` watches source files. See [development contracts](docs/development.md), [interaction design](docs/interaction-design.md), [folder classification](docs/folder-classification.md), [link suggestions](docs/link-suggestions.md) and the [link matching algorithm](docs/link-matching.md) (`npm run benchmark:links`).
+
+## License
+
+Copyright 2026 KineiChou. Licensed under the [Apache License 2.0](LICENSE).
+
+You may use, modify and redistribute Homing, including in modified form. Redistributions must keep the copyright notice and the [NOTICE](NOTICE) file crediting KineiChou, include the license, and state which files you changed.
