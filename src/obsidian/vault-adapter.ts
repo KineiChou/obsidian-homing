@@ -113,7 +113,7 @@ export class VaultAdapter {
     await this.app.fileManager.renameFile(file, to);
     for (let attempt = 0; attempt < 20; attempt++) {
       if (referencesSettled(this.app, inspection)) return;
-      await new Promise<void>(resolve => setTimeout(resolve, 50));
+      await new Promise<void>(resolve => window.setTimeout(resolve, 50));
     }
     throw new OrganizerError('unsafe', 'host.linksUnverified');
   }

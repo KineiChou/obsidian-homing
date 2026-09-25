@@ -20,7 +20,7 @@ interface ActiveQuery {
   readonly match: string;
   readonly display: string;
   readonly settingsKey: string;
-  timer?: ReturnType<typeof setTimeout>;
+  timer?: number;
   checking: boolean;
   selected?: number | null;
 }
@@ -50,7 +50,7 @@ export class LinkQuerySuggest extends EditorSuggest<QueryItem> {
     const settings = this.controller.settings();
     return JSON.stringify([settings.provider, settings.endpoint, settings.modelId, settings.secretName, settings.verifyOnHover, settings.linkScope, settings.excludedPaths]);
   }
-  private cancel(): void { if (this.active) clearTimeout(this.active.timer); this.active = null; }
+  private cancel(): void { if (this.active) window.clearTimeout(this.active.timer); this.active = null; }
   close(): void { this.cancel(); super.close(); }
   onTrigger(cursor: EditorPosition, editor: Editor, file: TFile | null): EditorSuggestTriggerInfo | null {
     const query = file ? parseLinkQuery(editor.getLine(cursor.line), cursor.ch) : null;
@@ -82,7 +82,7 @@ export class LinkQuerySuggest extends EditorSuggest<QueryItem> {
   private scheduleCheck(source: ActiveQuery, matches: readonly TargetMatch[]): void {
     if (source.checking || source.selected !== undefined || source.match.length < 2 || matches.length < 2 || !this.controller.settings().verifyOnHover) return;
     source.checking = true;
-    source.timer = setTimeout(() => {
+    source.timer = window.setTimeout(() => {
       if (!this.current(source)) { if (this.active === source) this.cancel(); return; }
       const line = source.line.slice(0, source.start.ch) + source.match + source.line.slice(source.end.ch);
       void this.controller.verifyLinkQuery(source.path, source.match, line, matches.map(item => item.target), () => this.current(source)).then(noteId => {

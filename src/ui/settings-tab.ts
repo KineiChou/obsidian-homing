@@ -45,13 +45,13 @@ export function renderSettings(container: HTMLElement, app: App, controller: Org
   connection.addButton(control => control.setButtonText(t(controller.enabled() ? 'settings.check' : 'settings.enable')).setCta().onClick(async () => {
     if (!controller.settings().inbox) { status.textContent = t('organizer.pickInbox'); return; }
     control.setDisabled(true); status.textContent = t('settings.checking');
-    try { await controller.testConnection(); controller.setEnabled(true); control.setButtonText(t('settings.check')); connection.setDesc(usage()); status.textContent = t('settings.connected'); if (options instanceof HTMLDetailsElement) options.open = true; }
+    try { await controller.testConnection(); controller.setEnabled(true); control.setButtonText(t('settings.check')); connection.setDesc(usage()); status.textContent = t('settings.connected'); if (folded) folded.open = true; }
     catch (error) { status.textContent = errorText(error); }
     finally { control.setDisabled(false); }
   }));
 
   // Until an inbox exists, everything else stays folded so the first run is only the essentials.
-  const options = configuration.inbox ? container : details(container, t('settings.options'));
+  const folded = configuration.inbox ? null : details(container, t('settings.options')), options = folded ?? container;
   new Setting(options).setName(t('settings.automation')).setHeading();
   new Setting(options).setName(t('settings.autoFiling')).setDesc(t('settings.autoFilingHelp')).addToggle(toggle => toggle.setValue(configuration.autoFiling).onChange(value => change({ autoFiling: value })));
   new Setting(options).setName(t('settings.analyzeOnOpen')).setDesc(t('settings.analyzeOnOpenHelp')).addToggle(toggle => toggle.setValue(configuration.analyzeOnOpen).onChange(value => change({ analyzeOnOpen: value })));

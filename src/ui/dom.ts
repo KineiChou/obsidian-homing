@@ -1,8 +1,8 @@
 export function node<K extends keyof HTMLElementTagNameMap>(parent: HTMLElement, tag: K, text?: string, className?: string): HTMLElementTagNameMap[K] {
-  const element = parent.ownerDocument.createElement(tag);
+  // Obsidian's DOM helper keeps elements in the right window for popouts.
+  const element = parent.createEl(tag);
   if (text !== undefined) element.textContent = text;
   if (className) element.className = className;
-  parent.append(element);
   return element;
 }
 export function button(parent: HTMLElement, text: string, action: () => void, primary = false): HTMLButtonElement {

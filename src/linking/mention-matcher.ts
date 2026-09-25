@@ -1,5 +1,5 @@
 import { parentPath } from '../core/paths';
-import type { EditorSnapshot, LinkGraph, LinkInput, LinkTarget, LocalMention, MentionMatcher, MetadataIndex, RankedCandidate, ScanRequest, TermKind, TextRange } from './types';
+import type { EditorSnapshot, LinkGraph, LinkInput, LinkTarget, LocalMention, MentionMatcher, MetadataIndex, RankedCandidate, ScanRequest, TextRange } from './types';
 import { graphemeBoundaries, tokens, wordBoundary } from './text-boundaries';
 import { KIND_WEIGHT, isShortTerm, normalize } from './terms';
 import { MemoryLinkGraph } from './link-graph';
@@ -43,7 +43,7 @@ export class LocalMentionMatcher implements MentionMatcher {
       if (!range || request.ignoredTerms.has(normalize(match.text.trim()))) continue;
       const raw = match.noteIds.flatMap(noteId => {
         const target = this.index.get(noteId);
-        return target && target.noteId !== request.sourceNoteId && !request.linkedNoteIds.has(noteId) && request.allowed(target) ? [{ target, kind: match.kinds[noteId] ?? 'derived' as TermKind }] : [];
+        return target && target.noteId !== request.sourceNoteId && !request.linkedNoteIds.has(noteId) && request.allowed(target) ? [{ target, kind: match.kinds[noteId] ?? 'derived' }] : [];
       });
       if (!raw.length || (raw.every(item => item.kind === 'derived') && raw.length > DERIVED_TARGET_LIMIT)) continue;
       const counts = this.graph.anchorCounts(match.text);

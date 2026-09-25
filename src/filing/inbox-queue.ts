@@ -9,7 +9,7 @@ export class StableInboxQueue implements InboxQueue {
   private readonly pending = new Map<string, Pending>();
   private readonly versions = new Map<string, object>();
   private readonly events = new Emitter();
-  private timer: ReturnType<typeof setTimeout> | undefined;
+  private timer: number | undefined;
   private stopped = false;
   private running = false;
   private persistence: Promise<void> = Promise.resolve();
@@ -81,15 +81,15 @@ export class StableInboxQueue implements InboxQueue {
     this.changed(); this.arm();
   }
   flush(): Promise<void> { return this.persistence; }
-  dispose(): void { this.stopped = true; if (this.timer !== undefined) clearTimeout(this.timer); this.pending.clear(); this.versions.clear(); this.events.clear(); }
+  dispose(): void { this.stopped = true; if (this.timer !== undefined) window.clearTimeout(this.timer); this.pending.clear(); this.versions.clear(); this.events.clear(); }
   private cancel(path: string): void { this.pending.delete(path); this.versions.delete(path); }
   private schedule(path: string, automatic: boolean, due: number, contentSource: FilingContentSource = automatic ? 'saved' : 'editor'): void { const token = {}; this.versions.set(path, token); this.pending.set(path, { token, automatic, due, contentSource }); this.arm(); }
   private arm(): void {
-    if (this.timer !== undefined) clearTimeout(this.timer);
+    if (this.timer !== undefined) window.clearTimeout(this.timer);
     this.timer = undefined;
     if (this.stopped || this.running || this.pending.size === 0) return;
     let next = Infinity; for (const item of this.pending.values()) next = Math.min(next, item.due);
-    this.timer = setTimeout(() => { this.timer = undefined; this.tick(); }, Math.max(0, next - Date.now()));
+    this.timer = window.setTimeout(() => { this.timer = undefined; this.tick(); }, Math.max(0, next - Date.now()));
   }
   private tick(): void {
     for (const [path, work] of this.pending) {

@@ -114,7 +114,7 @@ export class ConfirmedMoveService implements MoveService {
   private async markReview(record: MoveRecord): Promise<void> { this.uncertain.add(record.id); try { await this.journal.put({ ...record, status: 'review', message: 'error.moveCheckLocation' }); } catch { /* Durable intent remains available for recovery. */ } }
   private async serial(noteId: number, operation: () => Promise<MoveResult | void>): Promise<MoveResult> {
     const previous = this.locks.get(noteId) ?? Promise.resolve();
-    const task = previous.then(operation).catch(() => ({ status: 'review', message: 'error.operationReview' }) as MoveResult);
+    const task = previous.then(operation).catch((): MoveResult => ({ status: 'review', message: 'error.operationReview' }));
     const settled = task.then(() => undefined);
     this.locks.set(noteId, settled);
     void settled.then(() => { if (this.locks.get(noteId) === settled) this.locks.delete(noteId); });

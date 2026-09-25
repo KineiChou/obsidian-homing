@@ -1,6 +1,13 @@
-# 开发预览验证记录
+# 验证记录
 
 0.2.1 历史验证日期：2026-09-24。环境：macOS arm64、Node.js 22.21.1、Obsidian 1.13.7。自动化测试使用合成内容、内存端口及模拟 HTTP；原生验收使用独立合成 vault。本轮还执行了 38 次固定合成内容的真实 Jev 对照，以及隔离 Ollama 实测；没有把用户知识库用作测试夹具。
+
+
+## 0.2.5 正式发布（2026-09-25）
+
+- **宿主验收**：项目负责人确认已在真实 Obsidian 中完成 0.2.5 的宿主验收清单（编辑器内胶囊与阅读模式、整理收件箱弹窗、原生文件栏与 Notebook Navigator 菜单、链接提示与悬停判断、`[[?` 查询），关闭 [#15](https://github.com/KineiChou/obsidian-homing/issues/15)。
+- **上架审查规则**：新增 `npm run lint:obsidian`（`eslint-plugin-obsidianmd` 0.4.2 推荐规则，仅检查 `src/`）并纳入 `npm run check`。修复 14 个错误（多余类型断言、未处理的 Promise、不安全的返回和调用、控制字符正则、组合字符类、未绑定方法）和 44 个警告：计时器改用 `window.*`，元素改由 Obsidian DOM 助手创建，行尾标记在编辑器所属窗口创建，设置页不再使用 `instanceof HTMLDetailsElement`。保留 1 个警告：`getSettingDefinitions()` 需要 Obsidian 1.13，高于本插件的最低版本 1.11.4。测试新增 `tests/setup.ts`，为 Node／jsdom 提供 `window` 与 Obsidian DOM 助手。
+- **发布流程**：工作流首次在 GitHub 上运行成功；Release 资产与本地干净克隆构建逐字节一致。工作流改为创建普通草稿（不再标记预发布）。GitHub 提示 `actions/*@v4` 依赖的 Node 20 已弃用；官方已发布 checkout／setup-node／upload-artifact v7 与 download-artifact v8，跨多个主版本，留待下个版本单独升级验证。
 
 ## 0.2.5：重新进入时重试无目录建议的笔记（2026-09-25）
 

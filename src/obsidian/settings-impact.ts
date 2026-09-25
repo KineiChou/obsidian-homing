@@ -4,7 +4,7 @@ function selected(settings: OrganizerSettings, keys: readonly string[]): string 
   const values = Object.entries(settings).filter(([key]) => keys.includes(key) && (key !== 'endpoint' || settings.provider !== 'jev')).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => {
     if (key === 'excludedPaths' || key === 'excludedDestinations') return [key, [...value as readonly string[]].sort()];
     if (key === 'folderRules') return [key, [...settings.folderRules].sort((a, b) => a.path.localeCompare(b.path))];
-    return [key, value];
+    return [key, value as unknown];
   });
   return JSON.stringify(values);
 }

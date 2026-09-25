@@ -118,11 +118,11 @@ function navigatorApi(plugin: Plugin): NavigatorApi | undefined {
  * decoration API, so this probes its item map and silently does nothing when absent.
  */
 class ExplorerMarkers {
-  private timer: ReturnType<typeof setTimeout> | undefined;
+  private timer: number | undefined;
   private readonly marked = new Set<HTMLElement>();
   private readonly observers = new Map<HTMLElement, MutationObserver>();
   constructor(private readonly plugin: Plugin, private readonly controller: OrganizerController) {}
-  schedule(): void { clearTimeout(this.timer); this.timer = setTimeout(() => this.apply(), 120); }
+  schedule(): void { window.clearTimeout(this.timer); this.timer = window.setTimeout(() => this.apply(), 120); }
   private apply(): void {
     for (const element of this.marked) { delete element.dataset[MARKER]; delete element.dataset[COUNT]; }
     this.marked.clear();
@@ -151,7 +151,7 @@ class ExplorerMarkers {
     this.observers.set(container, observer);
   }
   dispose(): void {
-    clearTimeout(this.timer);
+    window.clearTimeout(this.timer);
     for (const observer of this.observers.values()) observer.disconnect();
     this.observers.clear();
     for (const element of this.marked) { delete element.dataset[MARKER]; delete element.dataset[COUNT]; }

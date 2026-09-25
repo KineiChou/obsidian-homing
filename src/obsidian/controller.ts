@@ -69,7 +69,7 @@ export class ObsidianOrganizer implements OrganizerController {
   private message: string | null = null;
   private activePath: string | null = null;
   constructor(private readonly plugin: Plugin) {
-    this.store = new PluginStateStore({ load: async () => (await plugin.loadData() as unknown) ?? legacyData(plugin), save: data => plugin.saveData(data), loadLocal: key => plugin.app.loadLocalStorage(key), saveLocal: (key, value) => plugin.app.saveLocalStorage(key, value) });
+    this.store = new PluginStateStore({ load: async () => (await plugin.loadData() as unknown) ?? legacyData(plugin), save: data => plugin.saveData(data), loadLocal: key => plugin.app.loadLocalStorage(key) as unknown, saveLocal: (key, value) => plugin.app.saveLocalStorage(key, value) });
     this.vault = new VaultAdapter(plugin.app, this.index, () => this.settings(), this.graph);
     this.editors = new EditorSessions({
       identity: path => this.vault.id(path), linkedTargets: (path, text) => this.vault.linkedTargets(path, text),
@@ -202,7 +202,7 @@ export class ObsidianOrganizer implements OrganizerController {
         const file = files[cursor++];
         if (file && this.vault.file(file.path) === file) this.metadata(file);
       }
-      await new Promise<void>(resolve => setTimeout(resolve, 0));
+      await new Promise<void>(resolve => window.setTimeout(resolve, 0));
     }
     if (!this.disposed && generation === this.generation) { this.ready = true; this.events.emit(); }
   }
