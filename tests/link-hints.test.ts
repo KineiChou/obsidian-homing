@@ -186,3 +186,14 @@ it('ignores an old pending verdict after a new sentence reuses the mention offse
   f.pending.get('Attention')!.resolve(12); await flush();
   expect(f.card()?.textContent).toContain('Resources › Attention (other)');
 });
+
+it('commands find an existing link or a mention at the cursor in the editor that last had focus', () => {
+  const f = fixture(); const focus = vi.spyOn(f.view, 'hasFocus', 'get').mockReturnValue(true);
+  f.view.dispatch({ selection: EditorSelection.cursor(TEXT.indexOf('Attention') + 1) });
+  f.view.update([]); focus.mockReturnValue(false);
+  // Opening the command palette moves focus away from the editor.
+  expect(f.hints.targetAtCursor()).toMatchObject({ kind: 'mention', session: 'session', mention: { text: 'Attention' } });
+  f.view.dispatch({ selection: EditorSelection.cursor(TEXT.length) }); expect(f.hints.targetAtCursor()).toBeNull();
+  f.view.dispatch({ changes: { from: 0, to: 2, insert: '[[Us|We]]' }, selection: EditorSelection.cursor(4) });
+  expect(f.hints.targetAtCursor()).toEqual({ kind: 'link', session: 'session', link: { from: 0, to: 9, text: '[[Us|We]]', display: 'We', target: 'Us' } });
+});

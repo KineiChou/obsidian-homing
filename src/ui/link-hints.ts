@@ -3,6 +3,7 @@ import { StateEffect, type Extension, type Range } from '@codemirror/state';
 import { Decoration, ViewPlugin, WidgetType, type DecorationSet, type EditorView, type ViewUpdate } from '@codemirror/view';
 import type { LinkMention, OrganizerController } from './types';
 import type { LinkTarget } from '../linking/types';
+import { linkAt, type LinkAtCursor } from '../linking/link-syntax';
 import { button, node } from './dom';
 import { errorText, t } from '../i18n';
 
@@ -10,7 +11,13 @@ export interface LinkHintHost {
   sessionId(view: EditorView): string | undefined;
   chooseTarget(candidates: readonly LinkTarget[], choose: (noteId: number) => void): void;
 }
-export interface LinkHints { readonly extension: Extension; acceptAtCursor(checking?: boolean): boolean }
+/** What a cursor command acts on: an existing link first, else a suggested mention. */
+export type CursorTarget = { kind: 'link'; session: string; link: LinkAtCursor } | { kind: 'mention'; session: string; mention: LinkMention };
+export interface LinkHints {
+  readonly extension: Extension;
+  acceptAtCursor(checking?: boolean): boolean;
+  targetAtCursor(): CursorTarget | null;
+}
 
 /** After an edit, the mention under the caret stays undecorated for this long (docs/link-matching.md §7). */
 export const QUIET_MS = 1500;
@@ -39,19 +46,21 @@ class MarkerWidget extends WidgetType {
 /** Local, network-free link hints; the model is asked only for uncertain mentions, on hover. */
 export function linkHints(controller: OrganizerController, host: LinkHintHost): LinkHints {
   const views = new Set<LinkHintView>();
-  const extension = ViewPlugin.define(view => { const hint: LinkHintView = new LinkHintView(view, controller, host, () => views.delete(hint)); views.add(hint); return hint; }, {
+  let lastFocused: LinkHintView | null = null;
+  const focused = (hint: LinkHintView) => { lastFocused = hint; };
+  const extension = ViewPlugin.define(view => { const hint: LinkHintView = new LinkHintView(view, controller, host, () => { views.delete(hint); if (lastFocused === hint) lastFocused = null; }, focused); views.add(hint); return hint; }, {
     decorations: value => value.decorations,
     eventHandlers: {
       mouseover(event) { this.hover(event); },
       mouseout(event) { this.leave(event); },
     },
   });
+  const current = () => [...views].find(item => item.view.hasFocus) ?? (lastFocused?.view.dom.isConnected ? lastFocused : undefined);
   return {
     extension,
-    acceptAtCursor: (checking = false) => {
-      const hint = [...views].find(item => item.view.hasFocus);
-      return hint ? hint.acceptAtCursor(checking) : false;
-    },
+    // The command palette takes focus from the editor, so fall back to the editor that had it last.
+    acceptAtCursor: (checking = false) => current()?.acceptAtCursor(checking) ?? false,
+    targetAtCursor: () => current()?.targetAtCursor() ?? null,
   };
 }
 
@@ -74,7 +83,7 @@ class LinkHintView {
   private scheduled = false;
   private builtKey = '';
   private alive = true;
-  constructor(readonly view: EditorView, private readonly controller: OrganizerController, private readonly host: LinkHintHost, private readonly release: () => void) {
+  constructor(readonly view: EditorView, private readonly controller: OrganizerController, private readonly host: LinkHintHost, private readonly release: () => void, private readonly focused: (hint: LinkHintView) => void) {
     this.decorations = this.build(); this.builtKey = this.key();
     this.unsubscribe = controller.subscribe(() => this.requestRefresh());
     view.scrollDOM.addEventListener('scroll', this.scrolled, { passive: true });
@@ -122,6 +131,7 @@ class LinkHintView {
       // Moving focus to a card action must preserve the button through mouseup.
       if (this.card && refreshed) this.renderCard();
     }
+    if (update.focusChanged && this.view.hasFocus) this.focused(this);
     if (update.focusChanged && !this.view.hasFocus) window.clearTimeout(this.cursorTimer);
     if (update.selectionSet && !update.docChanged) this.watchCursor();
   }
@@ -159,6 +169,14 @@ class LinkHintView {
   private atCursor(): LinkMention | undefined {
     const head = this.view.state.selection.main.head;
     return this.mentions.find(mention => mention.from <= head && head <= mention.to);
+  }
+  targetAtCursor(): CursorTarget | null {
+    const session = this.session;
+    if (!session) return null;
+    const head = this.view.state.selection.main.head, line = this.view.state.doc.lineAt(head), found = linkAt(line.text, head - line.from);
+    if (found) return { kind: 'link', session, link: { ...found, from: found.from + line.from, to: found.to + line.from } };
+    const mention = this.atCursor();
+    return mention ? { kind: 'mention', session, mention } : null;
   }
   acceptAtCursor(checking: boolean): boolean {
     const mention = this.atCursor();

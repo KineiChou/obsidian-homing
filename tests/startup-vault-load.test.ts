@@ -31,4 +31,10 @@ it('reads folders, restores saved suggestions and checks moves only once the lay
   expect(controller.folders().map(folder => folder.path)).toEqual(['Projects', 'Resources', 'Resources/Reading']);
   expect(controller.state().filing).toMatchObject([{ path: 'Inbox/Example.md', status: 'ready' }]);
   expect(controller.recentMoves()).toEqual([]);
+
+  // Later folder changes update the catalog at once and keep a suggestion whose folder still exists.
+  const archive = new TFolder('Archive'); app.files.set('Archive', archive); app.vault.emit('create', archive);
+  const projects = app.files.get('Projects')!; app.files.delete('Projects'); app.vault.emit('delete', projects);
+  expect(controller.folders().map(folder => folder.path)).toEqual(['Archive', 'Resources', 'Resources/Reading']);
+  expect(controller.state().filing).toMatchObject([{ path: 'Inbox/Example.md', status: 'ready' }]);
 });
