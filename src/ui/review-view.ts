@@ -6,6 +6,6 @@ export const LEGACY_REVIEW_VIEW = 'note-organizer-review';
 export class RetiredReviewView extends ItemView {
   constructor(leaf: WorkspaceLeaf, private readonly viewType: string) { super(leaf); }
   getViewType(): string { return this.viewType; }
-  getDisplayText(): string { return 'Note Organizer'; }
+  getDisplayText(): string { return 'Homing'; }
   async onOpen(): Promise<void> { window.setTimeout(() => this.leaf.detach(), 0); }
 }

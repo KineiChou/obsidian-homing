@@ -1,8 +1,10 @@
 {
-  "name": "obsidian-note-organizer",
+  "name": "obsidian-homing",
   "version": "0.2.5",
   "private": true,
-  "description": "Quiet, confirmation-based filing and link suggestions for Obsidian.",
+  "description": "File inbox notes into existing folders and link mentions to the right notes, with your confirmation, right in the editor.",
+  "author": "KineiChou",
+  "license": "Apache-2.0",
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "tsc --noEmit && node esbuild.config.mjs production",

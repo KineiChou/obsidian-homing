@@ -1,4 +1,4 @@
-# Note Organizer
+# Homing（归位，原 Note Organizer）
 
 - 使用中文与用户沟通，遵循已有产品设计和 `docs/development.md` 中的模块契约。
 - `main` 是已验证交付，`dev` 是集成，具体实现使用 `feat/*`。远程仓库为 GitHub `KineiChou/obsidian-note-organizer`（public）：`main`、`dev` 通过验证后可推送，`feat/*` 与标签／Release 需用户另行同意；任务来源见 GitHub issues。

@@ -28,6 +28,14 @@ import { claimLifecycle, type LifecycleLease } from './lifecycle';
 import { estimateFilingRequests } from './analysis-estimate';
 import { filingSettingsKey, linkSettingsKey } from './settings-impact';
 
+/** Plugin ID before the rename to Homing; its data is imported once, read-only, when the new folder is empty. */
+export const LEGACY_PLUGIN_ID = 'note-organizer';
+async function legacyData(plugin: Plugin): Promise<unknown> {
+  const adapter = plugin.app.vault.adapter as Partial<Pick<typeof plugin.app.vault.adapter, 'exists' | 'read'>> | undefined;
+  const path = `${plugin.app.vault.configDir}/plugins/${LEGACY_PLUGIN_ID}/data.json`;
+  if (plugin.manifest?.id === LEGACY_PLUGIN_ID || typeof adapter?.exists !== 'function' || typeof adapter.read !== 'function') return null;
+  try { return await adapter.exists(path) ? JSON.parse(await adapter.read(path)) as unknown : null; } catch { return null; }
+}
 export class ObsidianOrganizer implements OrganizerController {
   readonly events = new Emitter();
   readonly store: PluginStateStore;
@@ -61,7 +69,7 @@ export class ObsidianOrganizer implements OrganizerController {
   private message: string | null = null;
   private activePath: string | null = null;
   constructor(private readonly plugin: Plugin) {
-    this.store = new PluginStateStore({ load: () => plugin.loadData(), save: data => plugin.saveData(data), loadLocal: key => plugin.app.loadLocalStorage(key), saveLocal: (key, value) => plugin.app.saveLocalStorage(key, value) });
+    this.store = new PluginStateStore({ load: async () => (await plugin.loadData() as unknown) ?? legacyData(plugin), save: data => plugin.saveData(data), loadLocal: key => plugin.app.loadLocalStorage(key), saveLocal: (key, value) => plugin.app.saveLocalStorage(key, value) });
     this.vault = new VaultAdapter(plugin.app, this.index, () => this.settings(), this.graph);
     this.editors = new EditorSessions({
       identity: path => this.vault.id(path), linkedTargets: (path, text) => this.vault.linkedTargets(path, text),
