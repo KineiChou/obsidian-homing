@@ -9,6 +9,7 @@ import { InboxModal } from './ui/inbox-modal';
 import { filingPills, type FilingPills } from './ui/filing-pill';
 import { linkHints } from './ui/link-hints';
 import { LinkQuerySuggest } from './ui/link-query-suggest';
+import { LinkActionModal } from './ui/link-action-modal';
 import { DestinationPicker, TargetPicker } from './ui/target-picker';
 import { errorText, setLocale, t } from './i18n';
 
@@ -73,6 +74,17 @@ export default class NoteOrganizerPlugin extends Plugin {
     this.addCommand({ id: 'analyze-note', name: t('command.analyze'), checkCallback: checking => { const path = this.app.workspace.getActiveFile()?.path; if (!path || !organizer.vault.eligible(path)) return false; if (!checking) organizer.analyzeNote(path); return true; } });
     this.addCommand({ id: 'find-links', name: t('links.find'), callback: () => { void organizer.findLinks().then(() => new LinkSuggestionsModal(this.app, organizer).open()).catch(error => new Notice(errorText(error))); } });
     this.addCommand({ id: 'accept-link', name: t('command.acceptLink'), checkCallback: checking => hints.acceptAtCursor(checking) });
+    // No default hotkeys; the IDs are stable so Vim mappings can call them (see README).
+    this.addCommand({ id: 'link-menu', name: t('command.linkMenu'), checkCallback: checking => {
+      const target = hints.targetAtCursor(); if (!target) return false;
+      if (!checking) new LinkActionModal(this.app, organizer, target).open();
+      return true;
+    } });
+    this.addCommand({ id: 'unlink', name: t('command.unlink'), checkCallback: checking => {
+      const target = hints.targetAtCursor(); if (target?.kind !== 'link') return false;
+      if (!checking) { try { organizer.removeLink(target.session, target.link); } catch (error) { new Notice(errorText(error)); } }
+      return true;
+    } });
     this.addCommand({ id: 'toggle-automatic', name: t('command.toggle'), callback: () => organizer.setEnabled(!organizer.enabled()) });
     this.app.workspace.onLayoutReady(() => {
       if (this.organizer !== organizer) return;

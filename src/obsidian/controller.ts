@@ -17,6 +17,7 @@ import { LocalMentionMatcher, sentenceRange } from '../linking/mention-matcher';
 import { MemoryLinkGraph } from '../linking/link-graph';
 import { searchTargets } from '../linking/target-search';
 import { normalize } from '../linking/terms';
+import type { LinkAtCursor } from '../linking/link-syntax';
 import { JevLinkRecommender } from '../linking/recommender';
 import { ConfirmedLinkService } from '../linking/link-service';
 import type { LinkMention, OrganizerController, ReviewState } from '../ui/types';
@@ -529,6 +530,14 @@ export class ObsidianOrganizer implements OrganizerController {
     this.links = this.links.filter(item => !applied.has(item.id)); this.events.emit(); return result;
   }
   confirmLink(plan: LinkPlan): void { const result = this.confirmLinks([plan]); if (result.failures[0]) throw result.failures[0].error; }
+  /** Replaces a confirmed link with its visible text and keeps that spot from being suggested again this session. */
+  removeLink(sessionId: string, link: LinkAtCursor): void {
+    const session = this.editors.get(sessionId);
+    if (!session?.path || !this.vault.linkSource(session.path)) throw new OrganizerError('stale', 'error.linkStale');
+    session.replaceVerified(link.from, link.to, link.text, link.display);
+    session.suppressRange(link.from, link.from + link.display.length, link.display);
+    this.events.emit();
+  }
   dismissLink(proposal: LinkProposal): void { this.editors.get(proposal.input.anchor.editorSessionId)?.suppress(proposal.input.anchor, proposal.selected); this.links = this.links.filter(item => item.id !== proposal.id); this.events.emit(); }
   nextInboxNote(exclude?: string): string | null {
     const open = this.filing.filter(entry => entry.path !== exclude && !['done', 'moving', 'ignored', 'review'].includes(entry.status) && this.vault.file(entry.path) && this.vault.eligible(entry.path));

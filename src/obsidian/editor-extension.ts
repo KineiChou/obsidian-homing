@@ -163,6 +163,14 @@ export class NoteEditorSession implements EditorPort {
     const editor = info.editor;
     editor.transaction({ changes: sorted.map(change => ({ from: editor.offsetToPos(change.from), to: editor.offsetToPos(change.to), text: change.replacement })) }, 'note-organizer');
   }
+  /** Replaces exactly `expected` at [from, to) in one undoable transaction, e.g. to unlink. Link syntax is allowed here. */
+  replaceVerified(from: number, to: number, expected: string, replacement: string): void {
+    const info = this.view.state.field(editorInfoField, false);
+    if (!this.alive || this.view.composing || !info?.editor || this.read(from, to) !== expected) throw new OrganizerError('stale', 'error.linkStale');
+    const editor = info.editor;
+    editor.transaction({ changes: [{ from: editor.offsetToPos(from), to: editor.offsetToPos(to), text: replacement }] }, 'note-organizer');
+  }
+  suppressRange(from: number, to: number, text: string): void { this.suppressions.push({ from, to, text, target: null }); this.suppressions = this.suppressions.slice(-256); }
   rememberInsertion(anchor: TextAnchor, replacement: string, target: number): void { this.rememberInsertions([{ anchor, replacement, target }]); }
   rememberInsertions(insertions: readonly LinkInsertion[]): void {
     this.insertions = [...this.insertions, ...insertions.map(({ anchor, replacement, target }) => ({ from: anchor.from, original: anchor.originalText, replacement, target }))].slice(-256);

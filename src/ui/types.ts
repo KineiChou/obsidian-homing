@@ -4,6 +4,7 @@ import type { FilingEntry, MovePlan, MoveRecord } from '../filing/types';
 import type { FolderTarget } from '../folders/types';
 import type { LinkProposal, LinkPlan, LinkTarget, LinkConfirmation, LocalMention, TextRange } from '../linking/types';
 import type { TargetMatch } from '../linking/target-search';
+import type { LinkAtCursor } from '../linking/link-syntax';
 import type { DailyUsage, SchedulerStatus } from '../jev/types';
 /** A local mention as shown in the editor; `verified` is the note a model check selected. */
 export interface LinkMention extends LocalMention { readonly verdictKey: string; readonly verified?: number }
@@ -43,6 +44,7 @@ export interface OrganizerController {
   confirmLink(plan: LinkPlan): void;
   confirmLinks(plans: readonly LinkPlan[]): LinkConfirmation;
   dismissLink(proposal: LinkProposal): void;
+  removeLink(sessionId: string, link: LinkAtCursor): void;
   openNote(path: string): void;
   scanLinks(sessionId: string, ranges: readonly TextRange[]): readonly LinkMention[];
   verifyLink(sessionId: string, mention: LinkMention): Promise<number | null>;

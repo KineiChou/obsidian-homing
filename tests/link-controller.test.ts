@@ -27,7 +27,10 @@ async function fixture(text = 'Secret line.\nTransformer encodes audio with Atte
   const old = app.add('ML/Old.md'); app.caches.set(old, { links: [{ link: 'ML/Transformer', displayText: 'Transformer' }] });
   const plugin = new Plugin(app); plugin.data = { schemaVersion: 2, settings: { ...DEFAULT_SETTINGS, inbox: 'Inbox', secretName: 'key', autoFiling: false }, filingQueue: [], moveJournal: [] };
   const controller = new ObsidianOrganizer(plugin as unknown as ObsidianPlugin); await controller.initialize();
-  const info = { file, editor: { getValue: () => view.state.doc.toString() } } as unknown as MarkdownFileInfo;
+  const posAt = (offset: number) => { const line = view.state.doc.lineAt(offset); return { line: line.number - 1, ch: offset - line.from }; };
+  const at = (pos: { line: number; ch: number }) => view.state.doc.line(pos.line + 1).from + pos.ch;
+  const editor = { getValue: () => view.state.doc.toString(), offsetToPos: posAt, transaction: ({ changes }: { changes: { from: { line: number; ch: number }; to: { line: number; ch: number }; text: string }[] }) => view.dispatch({ changes: changes.map(change => ({ from: at(change.from), to: at(change.to), insert: change.text })) }) };
+  const info = { file, editor } as unknown as MarkdownFileInfo;
   const view = new EditorView({ parent: document.body, state: EditorState.create({ doc: text, extensions: [markdown(), editorInfoField.init(() => info), controller.editors.extension] }) });
   cleanup.push(() => { view.destroy(); void controller.dispose(); plugin.unload(); });
   await vi.waitFor(() => expect(controller.state().indexReady).toBe(true));
@@ -182,4 +185,15 @@ it('preserves Chinese word boundaries when the viewport isolates a title inside 
   f.controller.index.upsert({ noteId: 999, path: 'Topics/研究.md', title: '研究', aliases: [], tags: [], description: '', revision: 1 });
   expect(f.scan()).toEqual([]);
   expect(f.controller.scanLinks(f.session, [{ from: 2, to: 4 }])).toEqual([]);
+});
+
+it('removes a link at the cursor, keeps its visible text and does not suggest that spot again', async () => {
+  const f = await fixture('Transformer encodes audio with [[ML/Attention|attention]] here.');
+  const text = '[[ML/Attention|attention]]', from = f.view.state.doc.toString().indexOf(text);
+  const link = { from, to: from + text.length, text, display: 'attention', target: 'ML/Attention' };
+  f.controller.removeLink(f.session, link);
+  expect(f.view.state.doc.toString()).toBe('Transformer encodes audio with attention here.');
+  expect(f.scan().map(mention => mention.text)).toEqual(['Transformer']);
+  expect(() => f.controller.removeLink(f.session, link)).toThrow();
+  expect(f.view.state.doc.toString()).toBe('Transformer encodes audio with attention here.');
 });

@@ -70,13 +70,17 @@ export class Modal {
   onOpen(): void {}
 }
 export abstract class FuzzySuggestModal<T> extends Modal {
-  setPlaceholder(_value: string): void {}
+  readonly inputEl = document.createElement('input');
+  placeholder = '';
+  setPlaceholder(value: string): void { this.placeholder = value; }
   getSuggestions(query: string) { return this.getItems().filter(item => this.getItemText(item).toLowerCase().includes(query.toLowerCase())).map(item => ({ item, match: { score: 0, matches: [] } })); }
   abstract getItems(): T[];
   abstract getItemText(item: T): string;
   abstract onChooseItem(item: T): void;
   onOpen(): void {
     this.contentEl.setAttribute('role', 'dialog');
-    for (const item of this.getItems()) new Button(this.contentEl).setButtonText(this.getItemText(item)).onClick(() => { this.close(); this.onChooseItem(item); });
+    const list = this.contentEl.appendChild(document.createElement('div'));
+    const render = () => { list.replaceChildren(); for (const item of this.getItems()) new Button(list).setButtonText(this.getItemText(item)).onClick(() => { this.close(); this.onChooseItem(item); }); };
+    this.inputEl.addEventListener('input', render); render();
   }
 }
