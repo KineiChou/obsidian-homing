@@ -12,7 +12,7 @@
 
 ## 多提供方边界
 
-本文的请求和概率校验描述 Jev 专用协议。当前宿主通过 `createDecisionClient(transport, secrets, settingsGetter)` 选择 `jev`、`openai-compatible` 或 `anthropic`，保留统一 `DecisionClient.evaluate(batch)`。后两者在配置端点后分别调用 `/chat/completions` 或 `/messages`，要求完整候选排名与首选项，严格校验后转换为内部序数权重；权重不作为模型概率或置信度展示。端点、提供方、模型和分类策略参与结果有效性检查。新增提供方目前以模拟响应验证，不等于真实服务兼容性验收。
+本文的请求和概率校验描述 Jev 专用协议。当前宿主通过 `createDecisionClient(transport, secrets, settingsGetter)` 选择 `jev`、`openai-compatible` 或 `anthropic`，保留统一 `DecisionClient.evaluate(batch)`。其他提供方在配置端点后分别调用 `/chat/completions` 或 `/messages`，通过结构化输出请求每个候选的百分比，校验后归一为与 Jev 结构相同的概率；得不到可信百分比时退回只含顺序的 `rankOnly` 结果，不把序数权重当作概率（见[开发契约](development.md)）。端点、提供方、模型和分类策略参与结果有效性检查。新增提供方目前以模拟响应验证，不等于真实服务兼容性验收。
 
 ## 请求示例
 

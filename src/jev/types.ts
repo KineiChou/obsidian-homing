@@ -2,7 +2,8 @@ import type { Unsubscribe } from '../core/events';
 export type JsonValue = null | boolean | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 export interface ChoiceQuestion { readonly id: string; readonly instructions: string; readonly options: readonly { readonly id: string; readonly description: JsonValue }[] }
 export interface ChoiceBatch { readonly modelId: string; readonly state: JsonValue; readonly questions: readonly ChoiceQuestion[] }
-export interface ChoiceAnswer { readonly selected: string; readonly probabilities: Readonly<Record<string, number>>; readonly confidence: number }
+/** `rankOnly` marks probabilities that only encode an order (ranked-provider fallbacks), so their gaps say nothing about closeness. */
+export interface ChoiceAnswer { readonly selected: string; readonly probabilities: Readonly<Record<string, number>>; readonly confidence: number; readonly rankOnly?: boolean }
 export interface ChoiceBatchResult { readonly modelId: string; readonly answers: Readonly<Record<string, ChoiceAnswer>>; readonly inputTokens: number | null }
 export interface DecisionClient { evaluate(batch: ChoiceBatch): Promise<ChoiceBatchResult> }
 export interface HttpResponse { readonly status: number; readonly headers: Readonly<Record<string, string>>; readonly json: unknown }

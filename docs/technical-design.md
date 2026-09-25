@@ -33,7 +33,7 @@ flowchart LR
     Recommender --> Scheduler
     Scheduler --> Provider[统一 DecisionClient]
     Provider --> Jev[Jev Choice]
-    Provider --> Ranked[OpenAI-compatible / Anthropic 排名响应]
+    Provider --> Ranked[OpenRouter / OpenAI-compatible / Anthropic / Ollama 结构化概率]
     Controller --> UI[原生设置与整理面板]
     UI --> Confirm[已展示计划的用户确认]
     Confirm --> Move[移动服务]
@@ -48,7 +48,7 @@ flowchart LR
 | filing | [types.ts](../src/filing/types.ts) | StableInboxQueue、MixedDepthClassifier、ConfirmedMoveService |
 | linking | [types.ts](../src/linking/types.ts) | MemoryMetadataIndex、LocalMentionMatcher、JevLinkRecommender、ConfirmedLinkService |
 | jev | [types.ts](../src/jev/types.ts) | JevClient、响应校验、SharedDecisionScheduler、体积预算 |
-| providers | [client.ts](../src/providers/client.ts) | provider 路由、排名协议校验及统一结果转换 |
+| providers | [client.ts](../src/providers/client.ts) | provider 路由、结构化输出与兼容模式兜底、概率校验及统一结果转换 |
 | storage | [types.ts](../src/storage/types.ts) | PluginStateStore：串行持久化、移动日志、本机用量 |
 | ui | [types.ts](../src/ui/types.ts) | OrganizerController、ReviewPanel、ItemView、设置和选择器 |
 | obsidian | [controller.ts](../src/obsidian/controller.ts) | VaultAdapter、EditorSessions、公开 API 接入与生命周期 |
@@ -90,7 +90,7 @@ Choice 最多 255 项，包含放弃项。内部 DTO 转换为 `state/model/ques
 
 保守本地体积限制为状态加最大问题 30,000 UTF-8 字节、请求 60,000 字节，不声称是精确 token 计数。长文策略明确选择结构摘录或全文；摘录状态可见，处理后仍超限则失败，目录用途规则不静默裁剪。
 
-Jev 校验真实 Choice 概率；其他 provider 要求完整候选排名及首选项，拒绝缺失、重复、未知候选和截断响应，再转换为内部排序权重。此权重不是模型概率，不展示为置信度；服务设置不赋予文件写入能力。
+Jev 校验真实 Choice 概率；其他 provider 通过结构化输出返回每个候选的百分比，客户端校验完整性、取值范围及与 `choice` 的一致性后归一。百分比不可信，或兼容模式只给出排名或首选项时，结果标为 `rankOnly`，只用于排序，不参与“接近选项”判断。缺失、重复、未知候选和截断响应一律拒绝；服务设置不赋予文件写入能力。
 
 共享调度器最多一个实际在途请求。手动任务、链接、后台归档依次优先，自动请求开始至少相隔 5 秒。401/403 暂停；429/5xx 有限重试并尊重 Retry-After，重试占用预算。请求逻辑取消或超时不会释放实际名额；requestUrl 没有公开的 AbortSignal，必须等传输结束。[requestUrl](https://docs.obsidian.md/Reference/TypeScript%20API/requestUrl)
 

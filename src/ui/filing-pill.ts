@@ -1,6 +1,7 @@
 import { setIcon } from 'obsidian';
 import type { OrganizerController } from './types';
 import type { FilingEntry, MovePlan } from '../filing/types';
+import { closeAlternatives } from '../filing/alternatives';
 import { button, node } from './dom';
 import { errorText, t, translateMessage } from '../i18n';
 
@@ -141,7 +142,7 @@ class FilingPill {
       node(popover, 'div', breadcrumb(folders.find(folder => folder.id === targetId)!.path), 'note-organizer-popover-target');
     } else node(popover, 'p', entry.message ? translateMessage(entry.message) : t('pill.noSuggestion'), 'note-organizer-muted');
     const ranked = entry.proposal?.ranked ?? [];
-    if (targetId && ranked.length > 1 && ranked[0]!.probability - ranked[1]!.probability < .2) {
+    if (targetId && closeAlternatives(entry.proposal).length) {
       const alternatives = node(popover, 'div', undefined, 'note-organizer-alternatives'); node(alternatives, 'span', t('organizer.alternatives'));
       for (const candidate of ranked.filter(item => item.targetId !== targetId).slice(0, 2)) {
         const folder = folders.find(item => item.id === candidate.targetId);

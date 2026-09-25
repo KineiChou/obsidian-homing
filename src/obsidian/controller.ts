@@ -237,7 +237,7 @@ export class ObsidianOrganizer implements OrganizerController {
     const folders = this.catalog.snapshot().targets;
     const selectedPath = proposal.selected === null ? null : folders.find(target => target.id === proposal.selected)?.path;
     if (selectedPath === undefined || proposal.context.settingsRevision !== this.filingRevision) return undefined;
-    return { contentHash: proposal.source.contentHash, selectedPath, ranked: proposal.ranked.flatMap(item => { const target = folders.find(target => target.id === item.targetId); return target ? [{ path: target.path, probability: item.probability }] : []; }).slice(0, 3), modelId: proposal.context.modelId, promptRevision: proposal.context.promptRevision, settingsFingerprint: this.filingFingerprint, createdAt: Date.now(), ...(proposal.excerpt ? { excerpt: proposal.excerpt } : {}) };
+    return { contentHash: proposal.source.contentHash, selectedPath, ranked: proposal.ranked.flatMap(item => { const target = folders.find(target => target.id === item.targetId); return target ? [{ path: target.path, probability: item.probability }] : []; }).slice(0, 3), modelId: proposal.context.modelId, promptRevision: proposal.context.promptRevision, settingsFingerprint: this.filingFingerprint, createdAt: Date.now(), rankOnly: proposal.rankOnly === true, ...(proposal.excerpt ? { excerpt: proposal.excerpt } : {}) };
   }
   private async restoreProposal(path: string, saved: PersistedFilingProposal): Promise<FilingProposal | null> {
     const fingerprint = this.filingFingerprint, revision = this.filingRevision;
@@ -246,7 +246,7 @@ export class ObsidianOrganizer implements OrganizerController {
     if (!source || source.contentHash !== saved.contentHash || fingerprint !== this.filingFingerprint || revision !== this.filingRevision) return null;
     const target = saved.selectedPath === null ? null : folders.targets.find(target => target.path === saved.selectedPath);
     if (target === undefined) return null;
-    return { id: crypto.randomUUID(), source, foldersRevision: folders.revision, context: this.context(), selected: target?.id ?? null, ranked: saved.ranked.flatMap(item => { const target = folders.targets.find(target => target.path === item.path); return target ? [{ targetId: target.id, probability: item.probability }] : []; }), ...(saved.excerpt ? { excerpt: saved.excerpt } : {}) };
+    return { id: crypto.randomUUID(), source, foldersRevision: folders.revision, context: this.context(), selected: target?.id ?? null, ranked: saved.ranked.flatMap(item => { const target = folders.targets.find(target => target.path === item.path); return target ? [{ targetId: target.id, probability: item.probability }] : []; }), ...(saved.rankOnly ? { rankOnly: true } : {}), ...(saved.excerpt ? { excerpt: saved.excerpt } : {}) };
   }
   private invalidateLinks(): void {
     const previous = this.links.length;

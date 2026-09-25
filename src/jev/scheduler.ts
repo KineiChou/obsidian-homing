@@ -147,7 +147,8 @@ export class SharedDecisionScheduler implements DecisionScheduler {
     if (!job.settled) {
       if (!job.scope.isCurrent()) failure = new OrganizerError('stale', 'error.analysisStale');
       if (failure) {
-        const retryable = ['rate-limit', 'network', 'service'].includes(failure.code);
+        // `format`: a structured-output failure the client retries once in its compatible mode.
+        const retryable = ['rate-limit', 'network', 'service', 'format'].includes(failure.code);
         if (retryable && job.attempts < this.retries && failure.retryAfterMs <= 60_000 && this.queue.size < this.maxPending && !this.disposed && !this.paused) {
           job.readyAt = Date.now() + Math.max(failure.retryAfterMs, 1000 * 2 ** job.attempts++);
           this.queue.set(job.scope.key, job);

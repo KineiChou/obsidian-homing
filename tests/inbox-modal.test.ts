@@ -13,10 +13,10 @@ beforeEach(() => setLocale('en'));
 afterEach(() => document.body.replaceChildren());
 const settled = async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); };
 
-function fixture(preselect?: readonly string[]) {
+function fixture(preselect?: readonly string[], withRanked = false) {
   const changes = new Emitter();
-  const ready = (name: string, ranked: number[] = [.9, .1]): FilingEntry => ({ path: `Inbox/${name}.md`, status: 'ready', updatedAt: 1, message: null, proposal: { id: name, source: { noteId: 1, path: `Inbox/${name}.md`, revision: 1, contentHash: 'h' }, foldersRevision: 1, context, selected: 'reading', ranked: [{ targetId: 'reading', probability: ranked[0]! }, { targetId: 'projects', probability: ranked[1]! }] } });
-  let entries: FilingEntry[] = [ready('Alpha'), ready('Beta'), ready('Close', [.45, .4]), { path: 'Inbox/Raw.md', status: 'waiting', updatedAt: 1, message: null }];
+  const ready = (name: string, ranked: number[] = [.9, .1], rankOnly = false): FilingEntry => ({ path: `Inbox/${name}.md`, status: 'ready', updatedAt: 1, message: null, proposal: { id: name, source: { noteId: 1, path: `Inbox/${name}.md`, revision: 1, contentHash: 'h' }, foldersRevision: 1, context, selected: 'reading', ranked: [{ targetId: 'reading', probability: ranked[0]! }, { targetId: 'projects', probability: ranked[1]! }], ...(rankOnly ? { rankOnly } : {}) } });
+  let entries: FilingEntry[] = [ready('Alpha'), ready('Beta'), ready('Close', [.45, .4]), { path: 'Inbox/Raw.md', status: 'waiting', updatedAt: 1, message: null }, ...(withRanked ? [ready('Ranked', [2 / 3, 1 / 3], true)] : [])];
   const folders = [{ id: 'reading', path: 'Resources/Reading' }, { id: 'projects', path: 'Projects' }].map(folder => ({ ...folder, directPurpose: '', effectiveRules: [] }));
   const controller = {
     subscribe: (listener: () => void) => changes.subscribe(listener), folders: () => folders,
@@ -44,6 +44,13 @@ it('lists each destination and leaves close calls unselected by default', () => 
   expect(f.row('Alpha').querySelector('input')!.checked).toBe(true);
   expect(f.row('Close').querySelector('input')!.checked).toBe(false); expect(f.row('Close').textContent).toContain('1 close alternatives');
   expect(f.row('Raw').querySelector('input')).toBeNull(); expect(f.button('File 2 notes').disabled).toBe(false);
+});
+
+it('treats ranking-only proposals as clear suggestions instead of close calls', () => {
+  const f = fixture(undefined, true);
+  expect(f.row('Ranked').querySelector('input')!.checked).toBe(true);
+  expect(f.row('Ranked').textContent).not.toContain('close alternatives');
+  expect(f.button('File 3 notes').disabled).toBe(false);
 });
 
 it('files the selected notes one by one and reports a failure without stopping the batch', async () => {

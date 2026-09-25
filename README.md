@@ -58,7 +58,7 @@ If an analysis failed or found no suitable folder, leaving and reopening that no
 
 ## Current limits
 
-One inbox, Markdown notes, desktop only. Link discovery starts from filenames and aliases, so it does not discover every semantic relationship. Suggestions can be wrong, and a provider's ranking is not a calibrated confidence score. Review destinations and links before confirming.
+One inbox, Markdown notes, desktop only. Link discovery starts from filenames and aliases, so it does not discover every semantic relationship. Suggestions can be wrong, and the probabilities a model reports are not a calibrated confidence score. Review destinations and links before confirming.
 
 Moves that cannot preserve references safely are refused. If a move has already occurred but link updates cannot be verified, its record requires review; the plugin does not automatically move it back. Move undo is limited to the current plugin session. Restart recovery archives resolved operations and leaves ambiguous moves for review.
 
