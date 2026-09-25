@@ -6,6 +6,7 @@ export { Setting, SecretComponent, PluginSettingTab, Modal, FuzzySuggestModal } 
 export const editorInfoField = StateField.define<MarkdownFileInfo>({ create: () => ({ file: null }) as MarkdownFileInfo, update: value => value });
 export const requestUrl = vi.fn();
 export function setIcon(element: HTMLElement, icon: string): void { element.dataset.icon = icon; }
+export function setTooltip(element: HTMLElement, tooltip: string): void { element.dataset.tooltip = tooltip; }
 export const notices: string[] = [];
 export class Notice { constructor(message: string | DocumentFragment) { notices.push(typeof message === 'string' ? message : message.textContent ?? ''); } }
 export class MarkdownView {}

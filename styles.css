@@ -41,14 +41,31 @@
 .note-organizer-link-marker { display: inline-flex; vertical-align: middle; margin-inline-start: var(--size-4-1); color: var(--text-faint); cursor: pointer; }
 .note-organizer-link-marker svg { width: 12px; height: 12px; }
 .note-organizer-link-marker:hover { color: var(--text-accent); }
-.note-organizer-hint-card { position: fixed; z-index: var(--layer-popover); padding: var(--size-4-3); border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); background: var(--background-primary); box-shadow: var(--shadow-s); }
-.note-organizer-hint-row + .note-organizer-hint-row { margin-top: var(--size-4-3); padding-top: var(--size-4-3); border-top: 1px solid var(--background-modifier-border); }
-.note-organizer-hint-title { display: flex; align-items: center; gap: var(--size-4-1); font-weight: var(--font-semibold); }
-.note-organizer-hint-title svg { width: 14px; height: 14px; color: var(--text-muted); }
-.note-organizer-hint-row .note-organizer-muted { font-size: var(--font-ui-smaller); overflow-wrap: anywhere; }
-.note-organizer-hint-row .note-organizer-actions { margin-top: var(--size-4-2); }
-.note-organizer-hint-choices { display: flex; flex-wrap: wrap; gap: var(--size-4-1); margin-top: var(--size-4-2); }
-.note-organizer-hint-never { display: block; margin-top: var(--size-4-2); color: var(--text-faint); font-size: var(--font-ui-smaller); }
+.note-organizer-hint-card { position: fixed; z-index: var(--layer-popover); min-width: 220px; max-width: 320px; padding: 2px; border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); background: var(--background-primary); box-shadow: var(--shadow-s); font-size: var(--font-ui-small); line-height: var(--line-height-tight, 1.3); }
+.note-organizer-hint-row { padding: 6px 6px 6px 10px; }
+.note-organizer-hint-row + .note-organizer-hint-row { border-top: 1px solid var(--background-modifier-border); }
+.note-organizer-hint-label { margin-bottom: 2px; color: var(--text-faint); font-size: var(--font-ui-smaller); }
+.note-organizer-hint-head { display: flex; align-items: center; gap: var(--size-4-2); }
+.note-organizer-hint-target { flex: 1; min-width: 0; }
+.note-organizer-hint-title { overflow: hidden; color: var(--text-normal); font-weight: var(--font-medium); white-space: nowrap; text-overflow: ellipsis; }
+.note-organizer-hint-meta { overflow: hidden; color: var(--text-faint); font-size: var(--font-ui-smaller); white-space: nowrap; text-overflow: ellipsis; }
+.note-organizer-hint-about { display: -webkit-box; margin: 2px 0; white-space: normal; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.note-organizer-hint-status { display: flex; flex: 1; align-items: center; gap: 6px; min-width: 0; color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.note-organizer-hint-status.is-pending::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--text-accent); animation: note-organizer-pulse .8s ease-in-out infinite alternate; }
+@keyframes note-organizer-pulse { from { opacity: .25; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .note-organizer-hint-status.is-pending::before { animation: none; } }
+.note-organizer-hint-tools { display: flex; flex: none; align-items: center; gap: 2px; }
+.note-organizer-hint-card button.note-organizer-hint-accept { height: 24px; margin-right: 2px; padding: 0 var(--size-4-3); font-size: var(--font-ui-smaller); }
+.note-organizer-hint-card button.note-organizer-icon-button { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border-radius: var(--radius-s); background: transparent; box-shadow: none; color: var(--text-faint); }
+.note-organizer-hint-card button.note-organizer-icon-button:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+.note-organizer-icon-button svg { width: 14px; height: 14px; }
+.note-organizer-hint-options { display: flex; flex-direction: column; margin: 4px 0 0 -6px; }
+.note-organizer-hint-card button.note-organizer-hint-option { display: flex; align-items: baseline; gap: var(--size-4-2); width: 100%; height: auto; padding: 5px 6px; border-radius: var(--radius-s); background: transparent; box-shadow: none; text-align: left; font-size: inherit; }
+.note-organizer-hint-card button.note-organizer-hint-option:hover { background: var(--background-modifier-hover); }
+.note-organizer-hint-option:hover .note-organizer-hint-title { color: var(--text-accent); }
+.note-organizer-hint-option .note-organizer-hint-title { flex: none; max-width: 60%; }
+.note-organizer-hint-option .note-organizer-hint-meta { flex: 1; min-width: 0; margin: 0; }
+.note-organizer-hint-row .note-organizer-feedback { margin: 4px 0 0; font-size: var(--font-ui-smaller); }
 .note-organizer-query-title { display: flex; align-items: center; gap: var(--size-4-2); }
 .note-organizer-query-badge { padding: 0 var(--size-4-1); border-radius: var(--radius-s); background: var(--interactive-accent); color: var(--text-on-accent); font-size: var(--font-ui-smaller); }
 .note-organizer-query-item .note-organizer-muted { font-size: var(--font-ui-smaller); }
