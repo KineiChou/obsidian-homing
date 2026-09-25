@@ -4,7 +4,7 @@
 
 A desktop Obsidian plugin that suggests folders for inbox notes and internal links while you write. Review suggestions before applying them: moving notes and inserting links always require your confirmation.
 
-Current version: **0.2.7**. Homing was previously developed as *Note Organizer*. Requires **Obsidian 1.11.4+ on desktop**. Mobile support is not claimed.
+Current version: **0.2.8**. Homing was previously developed as *Note Organizer*. Requires **Obsidian 1.11.4+ on desktop**. Mobile support is not claimed.
 
 ## Get started
 
@@ -52,13 +52,15 @@ What an analysis request can contain:
 - **Link suggestions:** clear title and alias matches are found and shown locally, without any request. Only when you hover an ambiguous suggestion, pause while typing `[[?`, run the find-links command, or turn on background checks is the mention sent with its local sentence (or line), the source note path, and candidate notes' paths, titles, aliases, tags and description/summary metadata. This can include unsaved editor text. Turn off **Check ambiguous links on request** to never send hover or `[[?` requests. The link index does not send every note's full body or create embeddings.
 - **Connection tests:** a fixed synthetic example, without vault text.
 
+To find inbox notes, destination folders and link targets, the plugin lists the vault's files and folders and reads Markdown metadata locally. That list stays on your device; only the candidates described above are included in a request.
+
 The plugin does not collect telemetry. Credentials are read through Obsidian's secret storage; settings retain the secret name rather than the key. Notes and complete requests are not written to diagnostic logs. Minimal filing suggestions, settings and move history are stored locally in plugin data; normal vault synchronization may synchronize that data. Saved suggestions contain paths, content fingerprints and classification metadata, not note bodies. Valid suggestions restore without contacting the provider; existing inbox notes remain waiting until you select them for analysis or open one that has no suggestion yet (the **Analyze an inbox note when you open it** option, on by default with automatic filing).
 
 If an analysis failed or found no suitable folder, leaving and reopening that note starts another attempt. Notes with a suggested folder, requests already in progress and ignored notes are not resubmitted. Retries use the same daily request allowance.
 
 ## Current limits
 
-One inbox, Markdown notes, desktop only. Link discovery starts from filenames and aliases, so it does not discover every semantic relationship. Suggestions can be wrong, and a provider's ranking is not a calibrated confidence score. Review destinations and links before confirming.
+One inbox, Markdown notes, desktop only. Link discovery starts from filenames and aliases, so it does not discover every semantic relationship. Suggestions can be wrong, and the probabilities a model reports are not a calibrated confidence score. Review destinations and links before confirming.
 
 Moves that cannot preserve references safely are refused. If a move has already occurred but link updates cannot be verified, its record requires review; the plugin does not automatically move it back. Move undo is limited to the current plugin session. Restart recovery archives resolved operations and leaves ambiguous moves for review.
 

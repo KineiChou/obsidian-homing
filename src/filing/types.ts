@@ -4,11 +4,11 @@ import type { FolderSnapshot } from '../folders/types';
 export interface SourceVersion { readonly noteId: number; readonly path: string; readonly revision: number; readonly contentHash: string }
 export interface NoteSnapshot { readonly excerpt?: ProposalExcerpt; readonly source: SourceVersion; readonly title: string; readonly body: string; readonly tags: readonly string[] }
 export interface ProposalExcerpt { readonly originalChars: number; readonly sentChars: number }
-export interface FilingProposal { readonly excerpt?: ProposalExcerpt; readonly id: string; readonly source: SourceVersion; readonly foldersRevision: number; readonly context: DecisionContext; readonly selected: string | null; readonly ranked: readonly { readonly targetId: string; readonly probability: number }[] }
+export interface FilingProposal { readonly excerpt?: ProposalExcerpt; readonly id: string; readonly source: SourceVersion; readonly foldersRevision: number; readonly context: DecisionContext; readonly selected: string | null; readonly ranked: readonly { readonly targetId: string; readonly probability: number }[]; readonly rankOnly?: boolean }
 export interface FolderClassifier { propose(note: NoteSnapshot, folders: FolderSnapshot, context: DecisionContext, scope: RequestScope): Promise<FilingProposal> }
 export type FilingStatus = 'waiting' | 'analyzing' | 'ready' | 'unassigned' | 'failed' | 'ignored' | 'moving' | 'done' | 'review';
 export interface FilingEntry { readonly excerpt?: ProposalExcerpt; readonly path: string; readonly status: FilingStatus; readonly updatedAt: number; readonly message: string | null; readonly proposal?: FilingProposal; readonly moveRecordId?: string }
-export interface PersistedFilingProposal { readonly contentHash: string; readonly selectedPath: string | null; readonly ranked: readonly { readonly path: string; readonly probability: number }[]; readonly modelId: string; readonly promptRevision: number; readonly settingsFingerprint: string; readonly createdAt: number; readonly excerpt?: ProposalExcerpt }
+export interface PersistedFilingProposal { readonly contentHash: string; readonly selectedPath: string | null; readonly ranked: readonly { readonly path: string; readonly probability: number }[]; readonly modelId: string; readonly promptRevision: number; readonly settingsFingerprint: string; readonly createdAt: number; readonly excerpt?: ProposalExcerpt; readonly rankOnly?: boolean }
 export interface PersistedFilingEntry { readonly path: string; readonly status: 'pending' | 'ignored'; readonly proposal?: PersistedFilingProposal }
 export type FilingContentSource = 'saved' | 'editor';
 export interface InboxQueue {

@@ -1,6 +1,7 @@
 import { App, Modal, setIcon } from 'obsidian';
 import type { OrganizerController } from './types';
 import type { FilingEntry, SourceVersion } from '../filing/types';
+import { closeAlternatives } from '../filing/alternatives';
 import { OrganizerError } from '../core/errors';
 import { button, node } from './dom';
 import { errorText, t, translateMessage } from '../i18n';
@@ -17,8 +18,7 @@ const PREVIEW_CHARS = 280;
 const basename = (path: string) => path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/, '');
 const breadcrumb = (path: string) => path.split('/').join(' › ');
 /** Close rankings are left unselected so a batch never files an uncertain note by default. */
-const closeAlternatives = (entry: FilingEntry) => { const ranked = entry.proposal?.ranked ?? []; return ranked.slice(1).filter(item => ranked[0]!.probability - item.probability < .2).length; };
-const closeCall = (entry: FilingEntry) => closeAlternatives(entry) > 0;
+const closeCall = (entry: FilingEntry) => closeAlternatives(entry.proposal).length > 0;
 function plainStart(text: string): string {
   const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '').replace(/[#>*_`[\]]+/g, '').replace(/\s+/g, ' ').trim();
   return body.length > PREVIEW_CHARS ? body.slice(0, PREVIEW_CHARS) + '…' : body;
@@ -110,7 +110,7 @@ export class InboxModal extends Modal {
     else if (folder) {
       node(detail, 'span', '→ ' + breadcrumb(folder.path));
       const change = button(detail, t('inbox.change'), () => this.choose(entry)); change.className = 'note-organizer-link-button'; change.dataset.focus = 'change:' + entry.path; change.disabled = this.busy;
-      if (closeCall(entry) && !this.destinations.has(entry.path)) node(detail, 'span', t('inbox.closeCall', { count: Math.min(2, closeAlternatives(entry)) }), 'note-organizer-muted');
+      if (closeCall(entry) && !this.destinations.has(entry.path)) node(detail, 'span', t('inbox.closeCall', { count: Math.min(2, closeAlternatives(entry.proposal).length) }), 'note-organizer-muted');
     } else {
       node(detail, 'span', entry.status === 'analyzing' ? t('organizer.preparing') : entry.message ? translateMessage(entry.message) : t('organizer.undecided'), 'note-organizer-muted');
       if (entry.status !== 'analyzing') { const choose = button(detail, t('organizer.choose'), () => this.choose(entry)); choose.className = 'note-organizer-link-button'; choose.dataset.focus = 'change:' + entry.path; choose.disabled = this.busy; }

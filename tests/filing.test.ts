@@ -111,7 +111,7 @@ describe('restorable suggestions', () => {
     const store = new PluginStateStore(memory.port); await store.load();
     expect(store.snapshot().schemaVersion).toBe(2); expect(store.snapshot().filingQueue[0]?.proposal).toBeUndefined(); expect(memory.port.save).not.toHaveBeenCalled();
     await store.updateQueue([{ path: note.source.path, status: 'pending', proposal: savedProposal() }]);
-    const restarted = new PluginStateStore(memory.port); await restarted.load(); expect(restarted.snapshot().filingQueue[0]?.proposal).toEqual(savedProposal());
+    const restarted = new PluginStateStore(memory.port); await restarted.load(); expect(restarted.snapshot().filingQueue[0]?.proposal).toEqual({ ...savedProposal(), rankOnly: false });
   });
   it('preserves a remapped suggestion and requeues invalid suggestions after stability delay', async () => {
     vi.useFakeTimers(); const propose = vi.fn(async () => proposal());

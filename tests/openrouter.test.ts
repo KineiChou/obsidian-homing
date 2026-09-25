@@ -28,9 +28,9 @@ describe('OpenRouter protocol', () => {
     expect(request.response_format.json_schema.schema).toEqual({
       type: 'object', additionalProperties: false, required: ['answers'], properties: {
         answers: { type: 'object', additionalProperties: false, required: ['pick'], properties: {
-          pick: { type: 'object', additionalProperties: false, required: ['choice', 'ranking'], properties: {
+          pick: { type: 'object', additionalProperties: false, required: ['choice', 'probabilities'], properties: {
             choice: { type: 'string', enum: ['yes', 'none'] },
-            ranking: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'string', enum: ['yes', 'none'] } },
+            probabilities: { type: 'object', additionalProperties: false, required: ['yes', 'none'], properties: { yes: { type: 'integer' }, none: { type: 'integer' } } },
           } },
         } },
       },
@@ -65,8 +65,11 @@ describe('OpenRouter protocol', () => {
     JSON.stringify({ answers: { pick: { choice: 'yes', ranking: ['none', 'yes'] } } }),
     JSON.stringify({ answers: { pick: { choice: 'unknown', ranking: ['unknown', 'none'] } } }),
     JSON.stringify({ answers: { pick: { choice: 'yes', ranking: ['yes'] } } }),
-  ])('rejects invalid ranked content: %s', async content => {
-    await expect(fixture({ status: 200, headers: {}, json: completion(content) }).client.evaluate(batch)).rejects.toMatchObject({ code: 'invalid-response' });
+  ])('rejects invalid ranked content after one compatible retry: %s', async content => {
+    const f = fixture({ status: 200, headers: {}, json: completion(content) });
+    await expect(f.client.evaluate(batch)).rejects.toMatchObject({ code: 'format' });
+    await expect(f.client.evaluate(batch)).rejects.toMatchObject({ code: 'invalid-response' });
+    expect(JSON.parse((f.post.mock.calls[1] as unknown as [string, unknown, string])[2]).response_format).toEqual({ type: 'json_object' });
   });
   it.each(['length', 'error', 'content_filter'])('rejects incomplete finish reason %s', async finish_reason => {
     const json = completion(); json.choices[0]!.finish_reason = finish_reason;
