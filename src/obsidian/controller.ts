@@ -159,14 +159,20 @@ export class ObsidianOrganizer implements OrganizerController {
       else { this.removeProfilesUnder(file.path); this.vault.removeUnder(file.path); for (const entry of this.queue.entries()) if (within(entry.path, file.path)) this.queue.remove(entry.path); this.refreshFolders(); }
       this.invalidateLinks();
     }));
-    this.plugin.registerEvent(workspace.on('file-open', file => { this.activePath = file?.path ?? null; if (file) this.analyzeOpened(file.path); this.events.emit(); }));
+    this.plugin.registerEvent(workspace.on('file-open', file => {
+      const path = file?.path ?? null, changed = path !== this.activePath;
+      this.activePath = path;
+      if (path !== null && changed) this.analyzeOpened(path);
+      this.events.emit();
+    }));
     this.activePath = workspace.getActiveFile()?.path ?? null;
     void this.buildIndex();
   }
   /** The opening editor may still hold the previous note; read the selected file for this request. */
   private analyzeOpened(path: string): void {
     const settings = this.settings(), entry = this.queue.entries().find(item => item.path === path);
-    if (!settings.analyzeOnOpen || !settings.autoFiling || !this.enabled() || !this.vault.eligible(path) || entry?.status !== 'waiting' || entry.proposal) return;
+    const needsAnalysis = entry === undefined || ['waiting', 'failed', 'unassigned'].includes(entry.status);
+    if (!settings.analyzeOnOpen || !settings.autoFiling || !this.enabled() || !this.vault.eligible(path) || !needsAnalysis) return;
     this.excerpts.delete(path); this.queue.analyze(path, 'saved');
   }
   private readonly profilePaths = new Set<string>();

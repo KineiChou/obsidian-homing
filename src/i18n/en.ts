@@ -165,7 +165,7 @@ export const en = {
   "settings.historyEmpty": "No moves yet.",
   "explorer.count": "{count} filing suggestions",
   "settings.analyzeOnOpen": "Analyze an inbox note when you open it",
-  "settings.analyzeOnOpenHelp": "Opening an inbox note without a suggestion analyzes its saved content. Requires automatic filing suggestions.",
+  "settings.analyzeOnOpenHelp": "Opening an inbox note without a suggested folder analyzes its saved content, including after a failed attempt. Requires automatic filing suggestions.",
   "settings.usageHeading": "Usage and content sent",
   "settings.add": "Add…",
   "settings.remove": "Remove",

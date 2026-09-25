@@ -1,6 +1,6 @@
 {
   "name": "obsidian-note-organizer",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "private": true,
   "description": "Quiet, confirmation-based filing and link suggestions for Obsidian.",
   "scripts": {

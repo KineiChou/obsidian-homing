@@ -1,6 +1,6 @@
 # 双链匹配：本地分层、链接统计先验与 `[[?` 查询
 
-状态：已集成于 0.2.4 开发预览（`src/linking/terms.ts`、`metadata-index.ts`、`link-graph.ts`、`mention-matcher.ts`、`target-search.ts`，宿主 `obsidian/controller.ts`，界面 `ui/link-hints.ts`、`ui/link-query-suggest.ts`）。本文是审查基准：阈值、公式和契约如有改动，须同步修改本文。旧方案比较见 [轻量索引](link-indexing.md)，产品边界见 [双链补齐](link-suggestions.md)。
+状态：已集成于 0.2.5 开发预览（`src/linking/terms.ts`、`metadata-index.ts`、`link-graph.ts`、`mention-matcher.ts`、`target-search.ts`，宿主 `obsidian/controller.ts`，界面 `ui/link-hints.ts`、`ui/link-query-suggest.ts`）。本文是审查基准：阈值、公式和契约如有改动，须同步修改本文。旧方案比较见 [轻量索引](link-indexing.md)，产品边界见 [双链补齐](link-suggestions.md)。
 
 ## 1. 目标与原则
 
