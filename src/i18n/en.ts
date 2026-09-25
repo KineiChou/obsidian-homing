@@ -127,6 +127,7 @@ export const en = {
   "pill.fileTo": "File to",
   "pill.next": "Next · {count} left",
   "pill.attachments": "{count} attachments stay in their current folder",
+  "pill.attachmentsMove": "{count} attachments move with the note",
   "pill.reanalyze": "Analyze again",
   "pill.noSuggestion": "No suggestion yet. Analyze this note or choose a folder.",
   "hint.label": "Link suggestion",

@@ -1,10 +1,10 @@
 import { App, TFile, TFolder, getFrontMatterInfo, parseYaml, parseLinktext, parseFrontMatterAliases, parseFrontMatterTags } from 'obsidian';
 import type { LinkGraph, MetadataIndex, LinkTarget } from '../linking/types';
-import type { NoteSnapshot, SourceVersion } from '../filing/types';
-import { contentHash, excluded, inInbox, safePath, within } from '../core/paths';
+import type { AttachmentMove, NoteSnapshot, SourceVersion } from '../filing/types';
+import { contentHash, excluded, inInbox, isAttachmentFolder, noteAttachmentFolder, parentPath, safePath, within } from '../core/paths';
 import { OrganizerError } from '../core/errors';
 import type { OrganizerSettings } from '../settings';
-import { inspectReferences, referencesSettled } from './reference-check';
+import { inspectReferences, referencesSettled, updatesLinks, vaultConfig } from './reference-check';
 
 export class VaultAdapter {
   private sequence = 0;
@@ -53,7 +53,46 @@ export class VaultAdapter {
   }
   remove(file: TFile): void { const id = this.ids.get(file); if (id !== undefined) { this.index.remove(id); this.graph?.removeNote(id); this.files.delete(id); this.revisions.delete(id); } }
   removeUnder(path: string): void { for (const file of this.files.values()) if (within(file.path, path)) this.remove(file); }
-  allFolders(): string[] { return this.app.vault.getAllFolders(false).map(folder => folder.path).filter(path => this.allowed(path)); }
+  /** Folders that can hold notes; folders Obsidian keeps for attachments are left out. */
+  allFolders(): string[] { const setting = this.attachmentSetting(); return this.app.vault.getAllFolders(false).map(folder => folder.path).filter(path => this.allowed(path) && !isAttachmentFolder(setting, path)); }
+  private attachmentSetting(): string { const value = vaultConfig(this.app, 'attachmentFolderPath'); return typeof value === 'string' ? value : '/'; }
+  /** Non-note files the note embeds or links to, with the link text used for each. */
+  attachments(path: string): Map<TFile, string[]> {
+    const file = this.file(path), cache = file && this.app.metadataCache.getFileCache(file), result = new Map<TFile, string[]>();
+    for (const reference of [...cache?.embeds ?? [], ...cache?.links ?? []]) {
+      let link = parseLinktext(reference.link).path;
+      try { link = decodeURI(link); } catch { /* Keep literal paths. */ }
+      const target = link ? this.app.metadataCache.getFirstLinkpathDest(link, path) : null;
+      if (target && !['md', 'canvas', 'base'].includes(target.extension)) result.set(target, [...result.get(target) ?? [], link]);
+    }
+    return result;
+  }
+  /**
+   * Attachments that follow the note to `destination`: in the inbox, used by no other file, and only when
+   * Obsidian's attachment location follows notes (same folder or a subfolder). Without automatic link
+   * updates, only attachments linked by a unique file name move, so their links resolve unchanged.
+   */
+  attachmentMoves(path: string, destination: string): AttachmentMove[] {
+    const folder = noteAttachmentFolder(this.attachmentSetting(), destination), inbox = this.settings().inbox;
+    if (folder === null || !inbox) return [];
+    const automatic = updatesLinks(this.app), moves: AttachmentMove[] = [], taken = new Set<string>();
+    const resolved = this.app.metadataCache.resolvedLinks;
+    for (const [file, links] of this.attachments(path)) {
+      const to = folder ? folder + '/' + file.name : file.name;
+      if (to === file.path || !within(file.path, inbox) || !this.allowed(file.path) || !this.allowed(to) || taken.has(to) || this.app.vault.getAbstractFileByPath(to)) continue;
+      if (Object.entries(resolved).some(([source, targets]) => source !== path && targets[file.path])) continue;
+      if (!automatic && (links.some(link => link !== file.name) || this.app.vault.getFiles().some(other => other !== file && other.name === file.name))) continue;
+      taken.add(to); moves.push({ from: file.path, to });
+    }
+    return moves.sort((a, b) => a.from.localeCompare(b.from));
+  }
+  async moveAttachment(from: string, to: string): Promise<void> {
+    const file = this.file(from);
+    if (!file || this.app.vault.getAbstractFileByPath(to)) throw new OrganizerError('conflict', 'host.moveOccupied');
+    const folder = parentPath(to);
+    if (folder && !this.app.vault.getAbstractFileByPath(folder)) await this.app.vault.createFolder(folder);
+    await this.app.fileManager.renameFile(file, to);
+  }
   async source(path: string): Promise<SourceVersion | null> {
     const file = this.file(path);
     if (!file) return null;

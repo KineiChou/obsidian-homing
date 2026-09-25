@@ -23,7 +23,7 @@ function fixture(views = 1) {
     subscribe: (listener: () => void) => changes.subscribe(listener),
     state: () => ({ filing: state.entries }), folders: () => folders, recentMoves: () => records, attachmentCount: () => 2,
     nextInboxNote: () => state.entries.find(entry => entry.path !== file.path && entry.status === 'ready')?.path ?? null,
-    prepareMove: vi.fn(async (path: string, folderId: string): Promise<MovePlan> => ({ id: `plan-${folderId}`, source: { ...source, path }, destination: `${folders.find(folder => folder.id === folderId)!.path}/Example.md`, folderId, foldersRevision: 1, settingsRevision: 1 })),
+    prepareMove: vi.fn(async (path: string, folderId: string): Promise<MovePlan> => ({ id: `plan-${folderId}`, source: { ...source, path }, destination: `${folders.find(folder => folder.id === folderId)!.path}/Example.md`, folderId, foldersRevision: 1, settingsRevision: 1, attachments: [{ from: 'Inbox/a.png', to: 'Resources/Reading/a.png' }] })),
     confirmMove: vi.fn(async (plan: MovePlan) => { records.push({ id: plan.id, noteId: 1, from: file.path, to: plan.destination, contentHash: 'hash', createdAt: 1, status: 'done' }); file.path = plan.destination; state.entries = state.entries.filter(entry => entry.path !== source.path); changes.emit(); }),
     undoMove: vi.fn(async () => undefined), analyzeNote: vi.fn(), ignoreNote: vi.fn(),
   };
@@ -46,7 +46,7 @@ it('floats a quiet suggestion that prepares and moves only after explicit confir
   expect(f.pill().textContent).toBe('→ Reading'); expect(f.pill().parentElement).toBe(f.editors[0]!.dom);
   expect(f.editors[0]!.dom.classList.contains('note-organizer-pill-parent')).toBe(true); expect(f.controller.prepareMove).not.toHaveBeenCalled();
   f.button('→ Reading').click(); await settled();
-  expect(f.pill().textContent).toContain('Resources › Reading'); expect(f.pill().textContent).toContain('2 attachments stay');
+  expect(f.pill().textContent).toContain('Resources › Reading'); expect(f.pill().textContent).toContain('1 attachments move with the note · 1 attachments stay');
   expect(f.pill().textContent).toContain('Also consider'); expect(f.controller.confirmMove).not.toHaveBeenCalled();
   f.button('File note').click(); await settled();
   expect(f.controller.confirmMove).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ folderId: 'reading' }));

@@ -1,10 +1,11 @@
 import { OrganizerError } from '../core/errors';
 import { filename, safePath } from '../core/paths';
-import type { MoveHost, MoveJournal, MovePlan, MoveRecord, MoveResult, MoveService, SourceVersion } from './types';
+import type { AttachmentMove, MoveHost, MoveJournal, MovePlan, MoveRecord, MoveResult, MoveService, SourceVersion } from './types';
 
 const stale = (): MoveResult => ({ status: 'stale', message: 'error.moveStale' });
 const conflict = (): MoveResult => ({ status: 'conflict', message: 'error.moveConflict' });
 const review = (): MoveResult => ({ status: 'review', message: 'error.moveReview' });
+const withAttachments = (items: readonly AttachmentMove[]) => items.length ? { attachments: items } : { attachments: undefined };
 const same = (a: SourceVersion, b: SourceVersion): boolean => a.noteId === b.noteId && a.path === b.path && a.revision === b.revision && a.contentHash === b.contentHash;
 export class ConfirmedMoveService implements MoveService {
   private readonly plans = new Map<string, MovePlan>();
@@ -25,7 +26,8 @@ export class ConfirmedMoveService implements MoveService {
     if (this.host.exists(destination)) throw new OrganizerError('conflict', 'error.moveConflict');
     const referenceIssue = this.referenceIssue(path, destination);
     if (referenceIssue) throw new OrganizerError('unsafe', referenceIssue);
-    const plan: MovePlan = { id: `move-${Date.now()}-${++this.counter}`, source: { ...source }, destination, folderId, foldersRevision: folders.revision, settingsRevision };
+    const attachments = this.host.attachments(path, destination).map(item => ({ ...item }));
+    const plan: MovePlan = { id: `move-${Date.now()}-${++this.counter}`, source: { ...source }, destination, folderId, foldersRevision: folders.revision, settingsRevision, attachments };
     if (this.plans.size >= 100) this.plans.delete(this.plans.keys().next().value as string);
     this.plans.set(plan.id, plan);
     return structuredClone(plan);
@@ -37,12 +39,14 @@ export class ConfirmedMoveService implements MoveService {
     return this.serial(plan.source.noteId, async () => {
       const check = await this.validate(plan);
       if (check) return check;
-      const record: MoveRecord = { id: plan.id, noteId: plan.source.noteId, from: plan.source.path, to: plan.destination, contentHash: plan.source.contentHash, createdAt: Date.now(), status: 'intent' };
+      const record: MoveRecord = { id: plan.id, noteId: plan.source.noteId, from: plan.source.path, to: plan.destination, contentHash: plan.source.contentHash, createdAt: Date.now(), status: 'intent', ...(plan.attachments.length ? { attachments: plan.attachments } : {}) };
       try { await this.journal.put(record); } catch { return { status: 'failed', message: 'error.moveJournal' }; }
       const recheck = await this.validate(plan);
       if (recheck) { await this.markReview(record); return recheck; }
       try { await this.host.rename(record.from, record.to); } catch { await this.markReview(record); return review(); }
-      const done: MoveRecord = { ...record, status: 'done' };
+      // The note is filed; an attachment that cannot follow stays where it is, and its links keep working.
+      const moved = await this.moveAttachments(plan.attachments);
+      const done: MoveRecord = { ...record, status: 'done', ...withAttachments(moved), ...(moved.length < plan.attachments.length ? { message: 'move.attachmentsKept' } : {}) };
       try {
         await this.journal.put(done);
         const retained = new Set(this.journal.records().filter(item => item.status === 'done').map(item => item.id));
@@ -73,7 +77,8 @@ export class ConfirmedMoveService implements MoveService {
       if (recheckReferences) { await this.markReview(intent); return { status: 'failed', message: recheckReferences }; }
       this.uncertain.add(recordId);
       try { await this.host.rename(record.to, record.from); } catch { await this.markReview(intent); return review(); }
-      const undone: MoveRecord = { ...record, status: 'undone' };
+      const returned = await this.moveAttachments((record.attachments ?? []).map(item => ({ from: item.to, to: item.from })));
+      const undone: MoveRecord = { ...record, status: 'undone', ...(returned.length < (record.attachments?.length ?? 0) ? { message: 'move.attachmentsKept' } : {}) };
       try { await this.journal.put(undone); await this.journal.put({ ...intent, status: 'undone' }); this.uncertain.delete(recordId); return { status: 'done', record: undone }; }
       catch { this.uncertain.add(recordId); this.uncertain.add(intent.id); return review(); }
     });
@@ -103,9 +108,18 @@ export class ConfirmedMoveService implements MoveService {
     const folder = folders.targets.find(item => item.id === plan.folderId);
     if (!current || !same(current, plan.source) || this.host.currentPath(current.noteId) !== plan.source.path || !this.host.eligible(plan.source.path) || folders.revision !== plan.foldersRevision || this.host.settingsRevision() !== plan.settingsRevision || !folder || folder.path + '/' + filename(plan.source.path) !== plan.destination) return stale();
     if (this.host.exists(plan.destination)) return conflict();
+    if (JSON.stringify(this.host.attachments(plan.source.path, plan.destination)) !== JSON.stringify(plan.attachments)) return stale();
     const referenceIssue = this.referenceIssue(plan.source.path, plan.destination);
     if (referenceIssue) return { status: 'failed', message: referenceIssue };
     return null;
+  }
+  private async moveAttachments(items: readonly AttachmentMove[]): Promise<AttachmentMove[]> {
+    const moved: AttachmentMove[] = [];
+    for (const item of items) {
+      if (!this.host.exists(item.from) || this.host.exists(item.to)) continue;
+      try { await this.host.moveAttachment(item.from, item.to); moved.push(item); } catch { /* It stays in place. */ }
+    }
+    return moved;
   }
   private referenceIssue(from: string, to: string): string | null {
     const result = this.host.referencesSafe(from, to);

@@ -150,12 +150,13 @@ class FilingPill {
     }
     const excerpt = entry.proposal?.excerpt ?? entry.excerpt, attachments = this.controller.attachmentCount(entry.path);
     if (excerpt) node(popover, 'p', t('organizer.excerpt', { sent: excerpt.sentChars, total: excerpt.originalChars }), 'note-organizer-muted');
-    if (attachments) node(popover, 'p', t('pill.attachments', { count: attachments }), 'note-organizer-muted');
+    // The prepared plan says which attachments follow the note; until then all of them count as staying.
+    const attachmentNote = node(popover, 'p', attachments ? t('pill.attachments', { count: attachments }) : '', 'note-organizer-muted'); attachmentNote.hidden = !attachments;
     const actions = node(popover, 'div', undefined, 'note-organizer-actions');
     const status = node(popover, 'p', this.feedback, 'note-organizer-feedback'); status.setAttribute('role', 'status'); status.hidden = !this.feedback;
     if (targetId) {
       const accept = button(actions, t('organizer.file'), () => { void this.accept(); }, true); accept.dataset.action = 'accept'; accept.disabled = true;
-      void this.prepare(entry.path, targetId, accept, status);
+      void this.prepare(entry.path, targetId, accept, status, attachmentNote, attachments);
     } else button(actions, t('organizer.analyzeOne'), () => { this.controller.analyzeNote(entry.path); this.toggle(false); }).dataset.action = 'analyze';
     const choose = button(actions, t('organizer.choose'), () => this.hostActions.chooseDestination(id => this.choose(entry, id))); choose.dataset.action = 'choose';
     const more = button(actions, '…', () => this.hostActions.menu(more, [
@@ -164,12 +165,15 @@ class FilingPill {
     ])); more.setAttribute('aria-label', t('organizer.more')); more.dataset.action = 'more';
     if (this.focusOnReady && !targetId) { this.focusOnReady = false; (actions.querySelector('button'))?.focus(); }
   }
-  private async prepare(path: string, targetId: string, accept: HTMLButtonElement, status: HTMLElement): Promise<void> {
+  private async prepare(path: string, targetId: string, accept: HTMLButtonElement, status: HTMLElement, attachmentNote: HTMLElement, attachments: number): Promise<void> {
     const generation = ++this.generation; this.plan = null;
     try {
       const plan = await this.controller.prepareMove(path, targetId);
       if (!this.alive || generation !== this.generation || !accept.isConnected) return;
       this.plan = plan; accept.disabled = false;
+      const moving = plan.attachments.length, staying = Math.max(0, attachments - moving);
+      attachmentNote.textContent = [moving ? t('pill.attachmentsMove', { count: moving }) : '', staying ? t('pill.attachments', { count: staying }) : ''].filter(Boolean).join(' · ');
+      attachmentNote.hidden = !moving && !staying;
       if (this.focusOnReady) { this.focusOnReady = false; accept.focus(); }
     } catch (error) {
       if (!this.alive || generation !== this.generation || !accept.isConnected) return;

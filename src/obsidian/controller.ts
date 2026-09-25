@@ -121,7 +121,7 @@ export class ObsidianOrganizer implements OrganizerController {
         return classifier.propose(prepared.note, folders, this.context(), { key: 'filing:' + path, priority: automatic ? 'filing' : 'manual', automatic, isCurrent: () => !this.disposed && this.requestRevision === requestRevision && isCurrent() && this.filingRevision === settings && this.vault.revision(path) === note.source.revision && this.catalog.snapshot().revision === folders.revision && this.vault.eligible(path) });
       },
     });
-    this.moves = new ConfirmedMoveService({ source: path => this.vault.source(path), currentPath: id => this.vault.currentPath(id), exists: path => Boolean(this.plugin.app.vault.getAbstractFileByPath(path)), eligible: path => this.vault.eligible(path), referencesSafe: (path, destination) => this.vault.referencesSafe(path, destination), rename: (from, to) => this.vault.rename(from, to), folders: () => this.catalog.snapshot(), settingsRevision: () => this.filingRevision }, this.store.journal);
+    this.moves = new ConfirmedMoveService({ source: path => this.vault.source(path), currentPath: id => this.vault.currentPath(id), exists: path => Boolean(this.plugin.app.vault.getAbstractFileByPath(path)), eligible: path => this.vault.eligible(path), referencesSafe: (path, destination) => this.vault.referencesSafe(path, destination), rename: (from, to) => this.vault.rename(from, to), attachments: (path, destination) => this.vault.attachmentMoves(path, destination), moveAttachment: (from, to) => this.vault.moveAttachment(from, to), folders: () => this.catalog.snapshot(), settingsRevision: () => this.filingRevision }, this.store.journal);
     this.recommender = new JevLinkRecommender(this.scheduler);
     const app = this.plugin.app;
     this.linker = new ConfirmedLinkService(this.index, {
@@ -546,15 +546,7 @@ export class ObsidianOrganizer implements OrganizerController {
     const open = this.filing.filter(entry => entry.path !== exclude && !['done', 'moving', 'ignored', 'review'].includes(entry.status) && this.vault.file(entry.path) && this.vault.eligible(entry.path));
     return (open.find(entry => entry.status === 'ready') ?? open[0])?.path ?? null;
   }
-  attachmentCount(path: string): number {
-    const file = this.vault.file(path), cache = file && this.plugin.app.metadataCache.getFileCache(file);
-    const attachments = new Set<string>();
-    for (const embed of cache?.embeds ?? []) {
-      const target = this.plugin.app.metadataCache.getFirstLinkpathDest(parseLinktext(embed.link).path, path);
-      if (target && target.extension !== 'md') attachments.add(target.path);
-    }
-    return attachments.size;
-  }
+  attachmentCount(path: string): number { return this.vault.attachments(path).size; }
   openNote(path: string): void { void this.plugin.app.workspace.openLinkText(path, this.activePath ?? '', false); }
   target(id: number) { return this.index.get(id); }
   async testConnection(): Promise<void> { await this.settingsWrite; const requestRevision = this.requestRevision; this.scheduler.setPaused(false); await this.scheduler.evaluate({ modelId: this.settings().modelId, state: 'A short example about learning.', questions: [{ id: 'connection', instructions: 'Choose the matching subject.', options: [{ id: 'learning', description: 'Learning and reading' }, { id: 'none', description: 'Other' }] }] }, { key: 'connection', priority: 'manual', automatic: false, isCurrent: () => !this.disposed && this.requestRevision === requestRevision }); }
