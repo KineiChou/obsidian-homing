@@ -36,7 +36,7 @@ export function renderSettings(container: HTMLElement, app: App, controller: Org
   });
   if (configuration.provider !== 'jev') {
     new Setting(container).setName(t('settings.endpoint')).addText(input => { input.setValue(configuration.endpoint); input.inputEl.addEventListener('change', () => { void save({ endpoint: input.getValue().trim() }).then(() => { provider.setDesc(sending()); }).catch(() => undefined); }); });
-    new Setting(container).setName(t('settings.model')).addText(input => { input.setValue(configuration.modelId); input.inputEl.addEventListener('change', () => change({ modelId: input.getValue().trim() })); });
+    new Setting(container).setName(t('settings.model')).setDesc(configuration.provider === 'openrouter' ? t('settings.openrouterModelHelp') : '').addText(input => { input.setValue(configuration.modelId); input.inputEl.addEventListener('change', () => change({ modelId: input.getValue().trim() })); });
   }
   const key = new Setting(container).setName(t('settings.key')).setDesc(t(configuration.provider === 'ollama' ? 'settings.localKeyHelp' : 'settings.keyHelp'));
   new SecretComponent(app, key.controlEl).setValue(configuration.secretName).onChange(name => change({ secretName: name }));
