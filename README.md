@@ -4,7 +4,7 @@
 
 A desktop Obsidian plugin that suggests folders for inbox notes and internal links while you write. Review suggestions before applying them: moving notes and inserting links always require your confirmation.
 
-Current version: **0.2.7**. Homing was previously developed as *Note Organizer*. Requires **Obsidian 1.11.4+ on desktop**. Mobile support is not claimed.
+Current version: **0.2.8**. Homing was previously developed as *Note Organizer*. Requires **Obsidian 1.11.4+ on desktop**. Mobile support is not claimed.
 
 ## Get started
 

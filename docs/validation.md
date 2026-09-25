@@ -4,7 +4,7 @@
 
 
 
-## 未发布：结构化概率与界面修正（dev，2026-09-25）
+## 0.2.8：结构化概率与界面修正（2026-09-25）
 
 `npm run check` 通过 TypeScript strict、ESLint（含 Obsidian 规则，保留 1 个 `getSettingDefinitions` 警告）、327 项测试（32 个文件）与生产构建。
 
