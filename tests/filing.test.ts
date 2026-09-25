@@ -121,6 +121,25 @@ describe('restorable suggestions', () => {
     expect(queue.entries()[0]?.proposal?.foldersRevision).toBe(2); expect(propose).toHaveBeenCalledTimes(1);
     queue.invalidate(() => null); await vi.advanceTimersByTimeAsync(99); expect(propose).toHaveBeenCalledTimes(1); await vi.advanceTimersByTimeAsync(1); expect(propose).toHaveBeenCalledTimes(2); queue.dispose();
   });
+  it('re-analyzes kept suggestions after a new folder, keeping each one until a new answer arrives', async () => {
+    vi.useFakeTimers(); let automatic = true; const answer = deferred<FilingProposal>();
+    const propose = vi.fn().mockResolvedValueOnce(proposal()).mockRejectedValueOnce(new OrganizerError('budget', 'error.budget')).mockReturnValueOnce(answer.promise);
+    const queue = new StableInboxQueue({ eligible: () => true, automaticEnabled: () => automatic, isEditing: () => false, propose, persist: async () => undefined, stableMs: 100 });
+    queue.analyze(note.source.path); await vi.advanceTimersByTimeAsync(0);
+    const keep = (item: FilingProposal) => ({ ...item, foldersRevision: 2 });
+    // A failed refresh (here: no budget left) keeps the current suggestion.
+    queue.invalidate(keep, { reanalyze: true }); await vi.advanceTimersByTimeAsync(100);
+    expect(propose).toHaveBeenCalledTimes(2); expect(queue.entries()[0]).toMatchObject({ status: 'ready', proposal: { selected: 'f1' }, message: null });
+    // The new folder is renamed while its refresh runs: the refresh is scheduled again.
+    queue.invalidate(keep, { reanalyze: true }); await vi.advanceTimersByTimeAsync(100); expect(propose).toHaveBeenCalledTimes(3);
+    expect(queue.entries()[0]?.status).toBe('ready');
+    queue.invalidate(keep); answer.resolve({ ...proposal(), selected: 'f2' }); await vi.advanceTimersByTimeAsync(0);
+    expect(queue.entries()[0]?.proposal?.selected).toBe('f1');
+    propose.mockResolvedValueOnce({ ...proposal(), selected: 'f2' }); await vi.advanceTimersByTimeAsync(100);
+    expect(propose).toHaveBeenCalledTimes(4); expect(queue.entries()[0]).toMatchObject({ status: 'ready', proposal: { selected: 'f2' } });
+    // Without automatic analysis a new folder never sends a request.
+    automatic = false; queue.invalidate(keep, { reanalyze: true }); await vi.advanceTimersByTimeAsync(1000); expect(propose).toHaveBeenCalledTimes(4); queue.dispose();
+  });
   it('restores offline but cannot overwrite a concurrent edit or removal', async () => {
     const restored = deferred<FilingProposal>(); const propose = vi.fn(async () => proposal());
     const queue = new StableInboxQueue({ eligible: () => true, automaticEnabled: () => true, isEditing: () => false, propose, persist: async () => undefined, restoreProposal: () => restored.promise });

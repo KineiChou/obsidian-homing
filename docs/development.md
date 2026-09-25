@@ -30,7 +30,7 @@
 
 `PersistedState.schemaVersion` 为 2，兼容读取 1；新增设置使用默认值，未知 schema 或损坏核心配置禁止写回。单条损坏建议降级为等待，加载过程不覆盖原文件。队列持久化只保存路径、忽略状态和可选最小建议：完整原文 SHA-256、目标路径或 null、前三个目标路径与分值、模型／提示版本、分类设置指纹、创建时间及摘录长度；不保存正文、会话 ID 或目录 ID。
 
-`InboxQueueDependencies.encodeProposal/restoreProposal` 由 controller 注入。启动先初始化目录，再创建队列并恢复建议，避免目录初始化触发空队列写回。异步 `restore()` 校验原文、设置指纹、模型和有效目标，并绑定当前会话身份；恢复期间的编辑、移除或重新分析使旧恢复结果失效。恢复和历史库存展示不联网，也不自动排队。`invalidate(preserve)` 保留仍有效的建议；失效建议和已有分析任务在自动归档允许时重新稳定等待，历史 waiting 库存不因目录变化或启用开关而上传。队列一次只向调度器提交一篇笔记，预算耗尽回到 waiting。
+`InboxQueueDependencies.encodeProposal/restoreProposal` 由 controller 注入。启动先初始化目录，再创建队列并恢复建议，避免目录初始化触发空队列写回。异步 `restore()` 校验原文、设置指纹、模型和有效目标，并绑定当前会话身份；恢复期间的编辑、移除或重新分析使旧恢复结果失效。恢复和历史库存展示不联网，也不自动排队。`invalidate(preserve, { reanalyze })` 保留仍有效的建议；`reanalyze` 仅由新增目标的建目录事件传入，在自动归档允许时为保留的建议排一次后台 `refresh` 分析（不切换为 analyzing，失败不覆盖原建议，被后续失效打断时重新排队）；失效建议和已有分析任务在自动归档允许时重新稳定等待，历史 waiting 库存不因目录变化或启用开关而上传。队列一次只向调度器提交一篇笔记，预算耗尽回到 waiting。
 
 移动意图必须先持久化，再写文件，最后保存结果。上一会话的 done 转为不可撤销的 archived；intent 通过两端路径和内容指纹确认已完成或未执行时归档，无法确定才进入 review。`acknowledge(recordId)` 将人工核对的 review 归档。完成历史最多保留 100 条，未解决 intent/review 不参与裁剪；撤销仅授权给当前服务实例成功完成的记录，不复用持久化 noteId。
 

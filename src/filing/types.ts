@@ -21,7 +21,11 @@ export interface InboxQueue {
   ignore(path: string): void;
   resume(path: string): void;
   mark(path: string, status: FilingStatus, message?: string, moveRecordId?: string): void;
-  invalidate(preserve?: (proposal: FilingProposal) => FilingProposal | null): void;
+  /**
+   * Re-validates entries after a folder or settings change. With `reanalyze`, kept suggestions are also analyzed
+   * again in the background (automatic analysis only); the current suggestion stays until a new one arrives.
+   */
+  invalidate(preserve?: (proposal: FilingProposal) => FilingProposal | null, options?: { readonly reanalyze?: boolean }): void;
   subscribe(listener: () => void): Unsubscribe;
   /** Wait for already queued saves; dispose first to prevent new queue writes. */
   flush(): Promise<void>;

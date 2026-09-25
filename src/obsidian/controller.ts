@@ -162,7 +162,7 @@ export class ObsidianOrganizer implements OrganizerController {
   }
   private start(): void {
     const { vault, metadataCache, workspace } = this.plugin.app;
-    this.plugin.registerEvent(vault.on('create', file => { if (file instanceof TFolder) this.refreshFolders(); else if (file instanceof TFile) { this.metadata(file); if (this.vault.eligible(file.path)) this.queue.touch(file.path, true); } }));
+    this.plugin.registerEvent(vault.on('create', file => { if (file instanceof TFolder) this.refreshFolders(true); else if (file instanceof TFile) { this.metadata(file); if (this.vault.eligible(file.path)) this.queue.touch(file.path, true); } }));
     this.plugin.registerEvent(vault.on('modify', file => { if (file instanceof TFile) { this.vault.touch(file); this.metadata(file); this.invalidateLinks(); if (this.vault.eligible(file.path)) this.queue.touch(file.path, true); } }));
     this.plugin.registerEvent(metadataCache.on('changed', file => { this.metadata(file); this.invalidateLinks(); }));
     this.plugin.registerEvent(vault.on('rename', (file, oldPath) => {
@@ -219,10 +219,13 @@ export class ObsidianOrganizer implements OrganizerController {
     }
     if (!this.disposed && generation === this.generation) { this.ready = true; this.events.emit(); }
   }
-  private refreshFolders(): void {
-    const revision = this.catalog.snapshot().revision;
+  /** With `created`, a folder that adds a destination also re-analyzes kept suggestions, since it may fit them better. */
+  private refreshFolders(created = false): void {
+    const before = this.catalog.snapshot();
     this.catalog.refresh(this.vault.allFolders(), this.settings());
-    if (this.catalog.snapshot().revision !== revision) this.queue?.invalidate(proposal => this.preserveProposal(proposal));
+    const after = this.catalog.snapshot(), known = new Set(before.targets.map(target => target.path));
+    const reanalyze = created && after.targets.some(target => !known.has(target.path));
+    if (after.revision !== before.revision) this.queue?.invalidate(proposal => this.preserveProposal(proposal), { reanalyze });
     this.events.emit();
   }
   private preserveProposal(proposal: FilingProposal): FilingProposal | null {
@@ -314,7 +317,7 @@ export class ObsidianOrganizer implements OrganizerController {
       const existing = this.plugin.app.vault.getAbstractFileByPath(validated);
       if (existing && !(existing instanceof TFolder)) throw new OrganizerError('conflict', 'host.pathOccupied');
       if (!existing) await this.plugin.app.vault.createFolder(validated);
-      this.refreshFolders();
+      this.refreshFolders(true);
       const target = this.catalog.snapshot().targets.find(target => target.path === validated);
       if (!target) throw new OrganizerError('stale', 'host.folderChanged');
       return target;
