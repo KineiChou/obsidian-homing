@@ -1,13 +1,17 @@
 .note-organizer { color: var(--text-normal); font-size: var(--font-ui-small); line-height: var(--line-height-normal); }
-.note-organizer [hidden], .note-organizer[hidden], .note-organizer-status[hidden] { display: none !important; }
+/* Repeated classes outrank Obsidian's button rules and our own display rules, so hidden always wins. */
+.note-organizer.note-organizer [hidden], .note-organizer.note-organizer[hidden], .note-organizer-status.note-organizer-status[hidden] { display: none; }
 .note-organizer-actions, .note-organizer-modal-footer, .note-organizer-section-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--size-4-2); }
 .note-organizer-actions { margin-top: var(--size-4-3); }
 .note-organizer-muted { color: var(--text-muted); }
 .note-organizer-feedback { color: var(--text-error); overflow-wrap: anywhere; }
 .note-organizer-path { overflow-wrap: anywhere; }
 .note-organizer button:disabled { cursor: default; }
-.note-organizer-link-button { padding: 0; height: auto; background: none; box-shadow: none; color: var(--text-accent); font-size: inherit; cursor: pointer; }
-.note-organizer-link-button:hover { background: none; text-decoration: underline; }
+/* Obsidian styles every `button:not(.clickable-icon)` as a filled, centered control; the type selector
+   plus our class outranks it so text buttons stay plain in every theme. */
+.note-organizer button.note-organizer-link-button { display: inline; height: auto; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; color: var(--text-accent); font-size: inherit; font-weight: inherit; line-height: inherit; cursor: pointer; }
+.note-organizer button.note-organizer-link-button:hover { background: none; color: var(--text-accent-hover, var(--text-accent)); }
+.note-organizer button.note-organizer-link-button:disabled { color: var(--text-faint); }
 
 /* Editor corner pill: absolutely positioned, so the note never reflows. */
 .note-organizer-pill-parent { position: relative; }
@@ -32,12 +36,13 @@
 .note-organizer-chip { height: auto; padding: 1px var(--size-4-2); font-size: var(--font-ui-smaller); box-shadow: none; border: 1px solid var(--background-modifier-border); background: transparent; }
 @media (prefers-reduced-motion: reduce) { .note-organizer-pill { transition: none; } }
 
-/* Link hints: a faint dotted underline, never a color change of the text. */
-.note-organizer-link-hint { text-decoration-line: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; cursor: pointer; }
+/* Link hints: a faint underline, never a color change of the text. A bottom border on the inline mark
+   draws it, and inline borders never change the line height. */
+.note-organizer-link-hint { padding-bottom: 1px; border-bottom: 1px solid transparent; cursor: pointer; }
 /* Clear matches: a thin solid line. Ambiguous ones: a fainter dotted line until checked. */
-.note-organizer-link-hint.is-confident { text-decoration-style: solid; text-decoration-color: var(--text-faint); }
-.note-organizer-link-hint.is-uncertain { text-decoration-style: dotted; text-decoration-color: var(--background-modifier-border-hover, var(--text-faint)); }
-.note-organizer-link-hint:hover { text-decoration-color: var(--text-accent); }
+.note-organizer-link-hint.is-confident { border-bottom-style: solid; border-bottom-color: var(--text-faint); }
+.note-organizer-link-hint.is-uncertain { border-bottom-style: dotted; border-bottom-color: var(--background-modifier-border-hover, var(--text-faint)); }
+.note-organizer-link-hint:hover { border-bottom-color: var(--text-accent); }
 .note-organizer-link-marker { display: inline-flex; vertical-align: middle; margin-inline-start: var(--size-4-1); color: var(--text-faint); cursor: pointer; }
 .note-organizer-link-marker svg { width: 12px; height: 12px; }
 .note-organizer-link-marker:hover { color: var(--text-accent); }
@@ -77,8 +82,8 @@
 .note-organizer-inbox-row { padding-block: var(--size-4-2); border-bottom: 1px solid var(--background-modifier-border); }
 .note-organizer-inbox-row-head { display: flex; align-items: center; gap: var(--size-4-2); }
 .note-organizer-inbox-row-head input { flex-shrink: 0; margin: 0; }
-.note-organizer-inbox-title { flex: 1; min-width: 0; height: auto; padding: 0; background: none; box-shadow: none; text-align: start; white-space: normal; overflow-wrap: anywhere; font-weight: var(--font-medium, 500); color: var(--text-normal); }
-.note-organizer-inbox-title:hover { background: none; color: var(--text-accent); }
+.note-organizer button.note-organizer-inbox-title { display: block; flex: 1; min-width: 0; height: auto; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; text-align: start; white-space: normal; overflow-wrap: anywhere; font-size: inherit; font-weight: var(--font-medium, 500); color: var(--text-normal); cursor: pointer; }
+.note-organizer button.note-organizer-inbox-title:hover { background: none; color: var(--text-accent); }
 .note-organizer-icon-button { flex-shrink: 0; height: auto; padding: 2px; background: none; box-shadow: none; }
 .note-organizer-inbox-detail { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--size-4-2); margin-top: 2px; padding-inline-start: calc(var(--checkbox-size, 15px) + var(--size-4-2)); color: var(--text-muted); font-size: var(--font-ui-smaller); overflow-wrap: anywhere; }
 .note-organizer-inbox-preview { margin: var(--size-4-1) 0 0; padding-inline-start: calc(var(--checkbox-size, 15px) + var(--size-4-2)); color: var(--text-muted); font-size: var(--font-ui-smaller); }
@@ -87,6 +92,26 @@
 .note-organizer-check-row input { flex-shrink: 0; }
 .note-organizer-link-row { border-bottom: 1px solid var(--background-modifier-border); padding-block: var(--size-4-2); }
 .note-organizer-link-row p:empty { display: none; }
+
+/* Analysis confirmation: the same compact card language as the link hint card. */
+.note-organizer-analysis-stats { display: flex; flex-wrap: wrap; gap: var(--size-4-1); }
+.note-organizer-stat { padding: 1px var(--size-4-2); border: 1px solid var(--background-modifier-border); border-radius: var(--radius-l, 12px); color: var(--text-muted); font-size: var(--font-ui-smaller); line-height: 1.6; }
+.note-organizer-stat.is-warning { border-color: var(--text-warning); color: var(--text-warning); }
+.note-organizer-analysis-disclosure { margin: var(--size-4-2) 0 var(--size-4-3); color: var(--text-faint); font-size: var(--font-ui-smaller); overflow-wrap: anywhere; }
+.note-organizer-analysis-warning { margin: 0 0 var(--size-4-3); color: var(--text-warning); font-size: var(--font-ui-smaller); }
+.note-organizer-analysis-card { padding: 2px; border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); background: var(--background-primary); }
+.note-organizer-analysis-head { display: flex; align-items: center; justify-content: space-between; gap: var(--size-4-2); padding: 6px 8px 4px 10px; color: var(--text-faint); font-size: var(--font-ui-smaller); }
+.note-organizer-analysis-tools { display: flex; gap: var(--size-4-3); }
+.note-organizer-analysis-list { max-height: 45vh; overflow: auto; }
+.note-organizer-analysis-row { display: flex; align-items: center; gap: var(--size-4-2); padding: 5px 8px; border-radius: var(--radius-s); cursor: pointer; }
+.note-organizer-analysis-row:hover { background: var(--background-modifier-hover); }
+.note-organizer-analysis-row input { flex: none; margin: 0; }
+.note-organizer-analysis-text { display: flex; flex: 1; align-items: baseline; gap: var(--size-4-2); min-width: 0; }
+.note-organizer-analysis-title { flex: none; max-width: 65%; overflow: hidden; color: var(--text-normal); font-weight: var(--font-medium); white-space: nowrap; text-overflow: ellipsis; }
+.note-organizer-analysis-row:hover .note-organizer-analysis-title { color: var(--text-accent); }
+.note-organizer-analysis-meta { flex: 1; min-width: 0; overflow: hidden; color: var(--text-faint); font-size: var(--font-ui-smaller); white-space: nowrap; text-overflow: ellipsis; }
+.note-organizer-analysis-date { flex: none; color: var(--text-faint); font-size: var(--font-ui-smaller); font-variant-numeric: tabular-nums; }
+.note-organizer-analysis-empty { margin: 0; padding: 6px 10px; color: var(--text-muted); }
 
 /* Built-in file explorer markers (optional, see settings). */
 .nav-file-title[data-note-organizer="ready"]::after { content: ""; flex-shrink: 0; align-self: center; width: 6px; height: 6px; margin-inline-start: auto; border-radius: 50%; background: var(--interactive-accent); opacity: .8; }
