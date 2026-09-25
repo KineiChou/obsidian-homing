@@ -74,7 +74,7 @@ export async function moveFixture() {
   const occupied = new Set<string>();
   const host: MoveHost = {
     source: async requested => requested === path ? { noteId: 10, path, revision, contentHash: await contentHash(body) } : null,
-    currentPath: id => id === 10 ? path : null, exists: requested => requested === path || occupied.has(requested), eligible: requested => inInbox(requested, 'Inbox', true), referencesSafe: () => true,
+    currentPath: id => id === 10 ? path : null, exists: requested => requested === path || occupied.has(requested), eligible: requested => inInbox(requested, 'Inbox', true), referencesSafe: () => true, attachments: () => [], moveAttachment: vi.fn(async () => undefined),
     rename: vi.fn(async (from, to) => { if (from !== path || occupied.has(to)) throw Error('conflict'); path = to; revision++; }), folders: () => catalog.snapshot(), settingsRevision: () => configuration,
   };
   return { memory, store, host, catalog, service: new ConfirmedMoveService(host, store.journal), occupied, path: () => path, body: () => body, edit: (text: string) => { body = text; revision++; }, configure: () => { configuration++; } };

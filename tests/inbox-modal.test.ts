@@ -24,7 +24,7 @@ function fixture(preselect?: readonly string[]) {
     nextInboxNote: () => 'Inbox/Alpha.md', readPreview: vi.fn(async () => ({ text: '---\ntags: [x]\n---\n# Heading\nFirst **paragraph** of text.', truncated: false })),
     prepareMove: vi.fn(async (path: string, folderId: string): Promise<MovePlan> => {
       if (path.includes('Beta')) throw new OrganizerError('conflict', 'error.targetExists');
-      return { id: 'plan-' + path, source: { noteId: 1, path, revision: 1, contentHash: 'h' }, destination: `${folders.find(folder => folder.id === folderId)!.path}/${path.split('/').at(-1)}`, folderId, foldersRevision: 1, settingsRevision: 1 };
+      return { id: 'plan-' + path, source: { noteId: 1, path, revision: 1, contentHash: 'h' }, destination: `${folders.find(folder => folder.id === folderId)!.path}/${path.split('/').at(-1)}`, folderId, foldersRevision: 1, settingsRevision: 1, attachments: [] };
     }),
     confirmMove: vi.fn(async (plan: MovePlan) => { entries = entries.map(entry => entry.path === plan.source.path ? { path: entry.path, status: 'done', updatedAt: 2, message: null } : entry); changes.emit(); }),
     undoMove: vi.fn(async () => undefined),
@@ -79,7 +79,7 @@ it('locks batch destinations and ignores a picker opened before confirmation', a
   const choose = f.host.chooseDestination.mock.calls[0]![0];
   let release!: () => void;
   f.controller.confirmMove.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
-  f.controller.prepareMove.mockImplementation(async (path, folderId) => ({ id: 'plan-' + path, source: { noteId: 1, path, revision: 1, contentHash: 'h' }, destination: `${folderId === 'projects' ? 'Projects' : 'Resources/Reading'}/${path.split('/').at(-1)}`, folderId, foldersRevision: 1, settingsRevision: 1 }));
+  f.controller.prepareMove.mockImplementation(async (path, folderId) => ({ id: 'plan-' + path, source: { noteId: 1, path, revision: 1, contentHash: 'h' }, destination: `${folderId === 'projects' ? 'Projects' : 'Resources/Reading'}/${path.split('/').at(-1)}`, folderId, foldersRevision: 1, settingsRevision: 1, attachments: [] }));
   f.button('File 2 notes').click(); await settled();
   const change = f.button('Change', f.row('Beta'));
   expect(change.disabled).toBe(true); change.click();

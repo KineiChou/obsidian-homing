@@ -42,6 +42,7 @@ export class FakeApp {
   readonly files = new Map<string, TFile | TFolder>();
   readonly caches = new Map<TFile, Record<string, unknown>>();
   readonly local = new Map<string, unknown>();
+  readonly config = new Map<string, unknown>();
   readonly saveLocalStorage = vi.fn((key: string, value: unknown) => { this.local.set(key, structuredClone(value)); });
   loadLocalStorage = (key: string) => this.local.get(key);
   readonly secretStorage = { getSecret: (name: string) => name === 'key' ? 'test-secret' : null };
@@ -50,6 +51,8 @@ export class FakeApp {
     getAbstractFileByPath: (path: string) => this.files.get(path) ?? null,
     getMarkdownFiles: () => [...this.files.values()].filter((file): file is TFile => file instanceof TFile && file.extension === 'md'),
     getAllFolders: () => [...this.files.values()].filter((file): file is TFolder => file instanceof TFolder),
+    getFiles: () => [...this.files.values()].filter((file): file is TFile => file instanceof TFile),
+    getConfig: (key: string) => this.config.get(key),
     read: vi.fn(async (file: TFile) => file.body),
     createFolder: async (path: string) => { const folder = new TFolder(path); this.files.set(path, folder); this.vault.emit('create', folder); return folder; },
   });
@@ -63,6 +66,10 @@ export class FakeApp {
     resolvedLinks: {} as Record<string, Record<string, number>>,
     getFileCache: (file: TFile) => this.caches.get(file) ?? null,
     getFirstLinkpathDest: (path: string, source: string) => {
+      if (/\.[^/.]+$/.test(path) && !path.endsWith('.md')) {
+        const folder = source.slice(0, source.lastIndexOf('/') + 1), name = path.slice(path.lastIndexOf('/') + 1);
+        return this.vault.getFileByPath(path) ?? this.vault.getFileByPath(folder + path) ?? (path.includes('/') ? null : this.vault.getFiles().find(file => file.name === name) ?? null);
+      }
       const direct = this.vault.getFileByPath(path.endsWith('.md') ? path : path + '.md'); if (direct) return direct;
       const folder = source.slice(0, source.lastIndexOf('/') + 1);
       return this.vault.getFileByPath(folder + (path.endsWith('.md') ? path : path + '.md')) ?? this.vault.getMarkdownFiles().find(file => file.basename === path.replace(/\.md$/, '')) ?? null;

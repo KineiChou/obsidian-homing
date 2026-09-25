@@ -129,6 +129,7 @@ export const zh = {
   "pill.fileTo": "归档到",
   "pill.next": "下一篇 · 还有 {count} 篇",
   "pill.attachments": "{count} 个附件保持原位",
+  "pill.attachmentsMove": "{count} 个附件将一起移动",
   "pill.reanalyze": "重新分析",
   "pill.noSuggestion": "暂无建议。可以分析这篇笔记或手动选择目录。",
   "hint.label": "链接建议",

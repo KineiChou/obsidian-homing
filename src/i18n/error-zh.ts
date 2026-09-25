@@ -29,6 +29,7 @@ export const errorZh: Readonly<Record<ErrorMessageKey, string>> = {
   "error.moveJournal": "移动记录无法保存，笔记尚未移动。",
   "error.undoJournal": "撤销记录无法保存，笔记尚未移动。",
   "move.previousCompleted": "上次会话已完成的移动。",
+  "move.attachmentsKept": "部分附件未能一起移动，已保留在原位置，链接不受影响。",
   "move.completedVerified": "已在目标位置确认移动完成。",
   "move.notCompleted": "原位置仍有笔记，此次移动未完成。",
   "move.changedReview": "笔记位置或内容已变化，请核对移动记录。",

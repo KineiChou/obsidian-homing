@@ -41,8 +41,10 @@ export interface InboxQueueDependencies {
   restoreProposal?(path: string, proposal: PersistedFilingProposal): Promise<FilingProposal | null>;
   readonly stableMs?: number;
 }
-export interface MovePlan { readonly id: string; readonly source: SourceVersion; readonly destination: string; readonly folderId: string; readonly foldersRevision: number; readonly settingsRevision: number }
-export interface MoveRecord { readonly id: string; readonly noteId: number; readonly from: string; readonly to: string; readonly contentHash: string; readonly createdAt: number; readonly status: 'intent' | 'done' | 'undone' | 'review' | 'archived'; readonly message?: string }
+/** An attachment that moves with its note, planned before confirmation. */
+export interface AttachmentMove { readonly from: string; readonly to: string }
+export interface MovePlan { readonly id: string; readonly source: SourceVersion; readonly destination: string; readonly folderId: string; readonly foldersRevision: number; readonly settingsRevision: number; readonly attachments: readonly AttachmentMove[] }
+export interface MoveRecord { readonly id: string; readonly noteId: number; readonly from: string; readonly to: string; readonly contentHash: string; readonly createdAt: number; readonly status: 'intent' | 'done' | 'undone' | 'review' | 'archived'; readonly message?: string; readonly attachments?: readonly AttachmentMove[] }
 export type MoveResult = { readonly status: 'done'; readonly record: MoveRecord } | { readonly status: 'stale' | 'conflict' | 'failed' | 'review'; readonly message: string };
 export interface MoveHost {
   source(path: string): Promise<SourceVersion | null>;
@@ -51,6 +53,9 @@ export interface MoveHost {
   eligible(path: string): boolean;
   referencesSafe(path: string, destination: string): boolean | string;
   rename(from: string, to: string): Promise<void>;
+  /** Attachments only this note uses that should follow it to `destination`; see docs/folder-classification.md. */
+  attachments(path: string, destination: string): readonly AttachmentMove[];
+  moveAttachment(from: string, to: string): Promise<void>;
   folders(): FolderSnapshot;
   settingsRevision(): number;
 }
