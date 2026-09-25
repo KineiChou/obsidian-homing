@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import type { Plugin as ObsidianPlugin } from 'obsidian';
 import { ObsidianOrganizer } from '../src/obsidian/controller';
 import { contentHash } from '../src/core/paths';
@@ -29,12 +29,17 @@ it('reads folders, restores saved suggestions and checks moves only once the lay
   Object.assign(app.workspace, { layoutReady: true }); ready!();
   await new Promise(resolve => setTimeout(resolve, 0)); await controller.store.flush();
   expect(controller.folders().map(folder => folder.path)).toEqual(['Projects', 'Resources', 'Resources/Reading']);
-  expect(controller.state().filing).toMatchObject([{ path: 'Inbox/Example.md', status: 'ready' }]);
+  await vi.waitFor(() => expect(controller.state().filing).toMatchObject([{ path: 'Inbox/Example.md', status: 'ready' }]));
   expect(controller.recentMoves()).toEqual([]);
 
   // Later folder changes update the catalog at once and keep a suggestion whose folder still exists.
+  // Only a folder that adds a destination asks for the kept suggestions to be analyzed again.
+  const invalidate = vi.spyOn((controller as unknown as { queue: { invalidate(...args: unknown[]): void } }).queue, 'invalidate');
+  const inside = new TFolder('Inbox/Later'); app.files.set('Inbox/Later', inside); app.vault.emit('create', inside); expect(invalidate).not.toHaveBeenCalled();
   const archive = new TFolder('Archive'); app.files.set('Archive', archive); app.vault.emit('create', archive);
+  expect(invalidate).toHaveBeenLastCalledWith(expect.any(Function), { reanalyze: true });
   const projects = app.files.get('Projects')!; app.files.delete('Projects'); app.vault.emit('delete', projects);
+  expect(invalidate).toHaveBeenLastCalledWith(expect.any(Function), { reanalyze: false });
   expect(controller.folders().map(folder => folder.path)).toEqual(['Archive', 'Resources', 'Resources/Reading']);
   expect(controller.state().filing).toMatchObject([{ path: 'Inbox/Example.md', status: 'ready' }]);
 });
