@@ -108,7 +108,6 @@ export class ObsidianOrganizer implements OrganizerController {
     } }, { get: () => this.plugin.app.secretStorage.getSecret(this.settings().secretName) }, () => this.settings());
     this.scheduler = new SharedDecisionScheduler(client, this.store.usage, () => this.settings().dailyRequestLimit);
     const classifier = new MixedDepthClassifier(this.scheduler, () => ({ longNoteStrategy: this.settings().longNoteStrategy, ...(this.settings().folderProfilesEnabled ? { profiles: this.profiles } : {}) }));
-    this.refreshFolders();
     this.queue = new StableInboxQueue({
       eligible: path => this.vault.eligible(path), automaticEnabled: () => this.enabled() && this.settings().autoFiling,
       encodeProposal: proposal => this.encodeProposal(proposal), restoreProposal: (path, proposal) => this.restoreProposal(path, proposal),
@@ -135,6 +134,22 @@ export class ObsidianOrganizer implements OrganizerController {
         return app.metadataCache.getFirstLinkpathDest(parseLinktext(path).path, source)?.path === target.path;
       },
     });
+    // On app start plugins load before the vault's file tree; existing files arrive as create events
+    // until the layout is ready. Read folders, restore the queue and check moves only after that.
+    const loaded = this.plugin.app.workspace.layoutReady === false ? null : this.track(() => this.loadVault());
+    if (loaded) { await loaded; this.assertActive(); }
+    this.plugin.register(this.queue.subscribe(() => { this.filing = this.queue.entries(); this.events.emit(); }));
+    this.plugin.register(this.scheduler.subscribe(() => this.events.emit()));
+    this.plugin.registerEditorExtension(this.editors.extension);
+    this.plugin.app.workspace.onLayoutReady(() => {
+      if (this.disposed) return;
+      void (loaded ?? this.track(() => this.loadVault())).then(() => { if (!this.disposed) this.start(); }, error => { if (!this.disposed) this.report(error); });
+    });
+  }
+  /** Vault-dependent state: the folder catalog, the restored queue and move recovery. */
+  private async loadVault(): Promise<void> {
+    // The first read fills the catalog; it is not a folder change, so the queue is not invalidated.
+    this.catalog.refresh(this.vault.allFolders(), this.settings());
     await this.queue.restore(this.store.snapshot().filingQueue);
     this.assertActive();
     await this.queue.restore(this.plugin.app.vault.getMarkdownFiles().filter(file => this.vault.eligible(file.path)).map(file => ({ path: file.path, status: 'pending' as const })));
@@ -142,10 +157,7 @@ export class ObsidianOrganizer implements OrganizerController {
     this.filing = this.queue.entries();
     await this.moves.recover();
     this.assertActive();
-    this.plugin.register(this.queue.subscribe(() => { this.filing = this.queue.entries(); this.events.emit(); }));
-    this.plugin.register(this.scheduler.subscribe(() => this.events.emit()));
-    this.plugin.registerEditorExtension(this.editors.extension);
-    this.plugin.app.workspace.onLayoutReady(() => { if (!this.disposed) this.start(); });
+    this.events.emit();
   }
   private start(): void {
     const { vault, metadataCache, workspace } = this.plugin.app;
