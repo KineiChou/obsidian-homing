@@ -74,6 +74,19 @@ Obsidian 1.13.7 合成库已验证目录选择不冻结、带入出链移动及�
 
 ## 开发命令和交付
 
+发布工作流使用 Node.js 22.21.1 与 npm 11.6.2。从源码构建：
+
+```sh
+npm install --global npm@11.6.2
+npm ci --ignore-scripts
+npm run check
+npm run package
+```
+
+`npm run package` 输出 `dist/homing/`，不安装到知识库，也不发布；把其中 `main.js`、`manifest.json`、`styles.css` 复制到测试知识库的 `.obsidian/plugins/homing/` 即可试用。开发监视使用 `npm run dev`，链接匹配基准为 `npm run benchmark:links`。相关设计见[交互设计](interaction-design.md)、[目录分类](folder-classification.md)、[链接建议](link-suggestions.md)、[双链匹配算法](link-matching.md)，验证记录见 [validation.md](validation.md)，发布流程见 [releasing.md](releasing.md)。
+
+从 *Note Organizer* 预览版升级：首次启动时，若 `.obsidian/plugins/homing/` 还没有数据，插件会从 `.obsidian/plugins/note-organizer/` 只读导入设置、待处理建议和移动记录，不修改旧目录；之后应停用并删除旧插件，避免两者同时运行。
+
 - `npm run check`：类型、Lint、领域测试、编辑器／UI／端口集成、生产构建。
 - `npm run package`：构建后复制三个安装文件及 `LICENSE`、`NOTICE` 到 `dist/homing/`。
 - `node --expose-gc benchmarks/metadata-index.mjs`：20,000 篇、每篇两个词条的实际索引；末尾传 `2` 改为每篇三个词条。
