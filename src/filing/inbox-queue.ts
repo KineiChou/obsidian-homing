@@ -1,15 +1,15 @@
 import { Emitter } from '../core/events';
 import { OrganizerError, messageFor } from '../core/errors';
 import { within } from '../core/paths';
-import type { FilingEntry, FilingProposal, FilingStatus, InboxQueue, InboxQueueDependencies, PersistedFilingEntry } from './types';
+import type { FilingContentSource, FilingEntry, FilingProposal, FilingStatus, InboxQueue, InboxQueueDependencies, PersistedFilingEntry } from './types';
 
-interface Pending { readonly token: object; readonly due: number; readonly automatic: boolean }
+interface Pending { readonly token: object; readonly due: number; readonly automatic: boolean; readonly contentSource: FilingContentSource }
 export class StableInboxQueue implements InboxQueue {
   private readonly items = new Map<string, FilingEntry>();
   private readonly pending = new Map<string, Pending>();
   private readonly versions = new Map<string, object>();
   private readonly events = new Emitter();
-  private timer: ReturnType<typeof setTimeout> | undefined;
+  private timer: number | undefined;
   private stopped = false;
   private running = false;
   private persistence: Promise<void> = Promise.resolve();
@@ -38,11 +38,11 @@ export class StableInboxQueue implements InboxQueue {
     if (!automatic || this.deps.automaticEnabled()) this.schedule(path, automatic, Date.now() + (this.deps.stableMs ?? 10000));
     this.changed();
   }
-  analyze(path: string): void {
+  analyze(path: string, contentSource: FilingContentSource = 'editor'): void {
     if (this.stopped || !this.deps.eligible(path) || this.items.get(path)?.status === 'ignored') return;
     this.cancel(path);
-    this.items.set(path, { path, status: 'waiting', updatedAt: Date.now(), message: null });
-    this.schedule(path, false, Date.now()); this.changed();
+    this.items.set(path, { path, status: 'analyzing', updatedAt: Date.now(), message: null });
+    this.schedule(path, false, Date.now(), contentSource); this.changed();
   }
   remove(path: string): void {
     for (const key of this.items.keys()) if (within(key, path)) { this.cancel(key); this.items.delete(key); }
@@ -81,15 +81,15 @@ export class StableInboxQueue implements InboxQueue {
     this.changed(); this.arm();
   }
   flush(): Promise<void> { return this.persistence; }
-  dispose(): void { this.stopped = true; if (this.timer !== undefined) clearTimeout(this.timer); this.pending.clear(); this.versions.clear(); this.events.clear(); }
+  dispose(): void { this.stopped = true; if (this.timer !== undefined) window.clearTimeout(this.timer); this.pending.clear(); this.versions.clear(); this.events.clear(); }
   private cancel(path: string): void { this.pending.delete(path); this.versions.delete(path); }
-  private schedule(path: string, automatic: boolean, due: number): void { const token = {}; this.versions.set(path, token); this.pending.set(path, { token, automatic, due }); this.arm(); }
+  private schedule(path: string, automatic: boolean, due: number, contentSource: FilingContentSource = automatic ? 'saved' : 'editor'): void { const token = {}; this.versions.set(path, token); this.pending.set(path, { token, automatic, due, contentSource }); this.arm(); }
   private arm(): void {
-    if (this.timer !== undefined) clearTimeout(this.timer);
+    if (this.timer !== undefined) window.clearTimeout(this.timer);
     this.timer = undefined;
     if (this.stopped || this.running || this.pending.size === 0) return;
     let next = Infinity; for (const item of this.pending.values()) next = Math.min(next, item.due);
-    this.timer = setTimeout(() => { this.timer = undefined; this.tick(); }, Math.max(0, next - Date.now()));
+    this.timer = window.setTimeout(() => { this.timer = undefined; this.tick(); }, Math.max(0, next - Date.now()));
   }
   private tick(): void {
     for (const [path, work] of this.pending) {
@@ -107,7 +107,7 @@ export class StableInboxQueue implements InboxQueue {
     const current = () => !this.stopped && this.versions.get(path) === work.token && this.deps.eligible(path) && (!work.automatic || this.deps.automaticEnabled());
     this.items.set(path, { path, status: 'analyzing', updatedAt: Date.now(), message: null }); this.events.emit();
     try {
-      const proposal = await this.deps.propose(path, work.automatic, current);
+      const proposal = await this.deps.propose(path, work.automatic, current, work.contentSource);
       if (!current()) return;
       this.items.set(path, { path, status: proposal.selected === null ? 'unassigned' : 'ready', proposal, updatedAt: Date.now(), message: null });
     } catch (error) {

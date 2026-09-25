@@ -1,6 +1,6 @@
 import { editorInfoField } from 'obsidian';
 import { ViewPlugin, type EditorView, type ViewUpdate } from '@codemirror/view';
-import { syntaxTree } from '@codemirror/language';
+import { ensureSyntaxTree, syntaxTree } from '@codemirror/language';
 import type { Extension } from '@codemirror/state';
 import type { EditorChange, EditorPort, EditorSnapshot, LinkInsertion, TextAnchor, TextRange } from '../linking/types';
 import { OrganizerError } from '../core/errors';
@@ -15,12 +15,13 @@ export interface EditorBridge {
 
 export class EditorSessions {
   private readonly sessions = new Map<string, NoteEditorSession>();
+  private readonly views = new WeakMap<EditorView, NoteEditorSession>();
   private focused: string | null = null;
   readonly extension: Extension;
   constructor(private readonly bridge: EditorBridge) {
     this.extension = ViewPlugin.define(view => {
       const session = new NoteEditorSession(view, this.bridge, () => { this.focused = session.id; });
-      this.sessions.set(session.id, session);
+      this.sessions.set(session.id, session); this.views.set(view, session);
       if (view.hasFocus) this.focused = session.id;
       return {
         update: (update: ViewUpdate) => session.update(update),
@@ -34,6 +35,7 @@ export class EditorSessions {
     return [...this.sessions.values()].find(session => session.path === path);
   }
   get(id: string): NoteEditorSession | undefined { return this.sessions.get(id); }
+  sessionFor(view: EditorView): NoteEditorSession | undefined { return this.views.get(view); }
   editing(path: string): boolean { return [...this.sessions.values()].some(session => session.path === path && session.focused); }
   dispose(): void { for (const session of this.sessions.values()) session.destroy(); this.sessions.clear(); }
 }
@@ -41,7 +43,7 @@ export class EditorSessions {
 export class NoteEditorSession implements EditorPort {
   readonly id = crypto.randomUUID();
   private revision = 0;
-  private timer: ReturnType<typeof setTimeout> | undefined;
+  private timer: number | undefined;
   private dirty: TextRange[] = [];
   private suppressions: Suppressed[] = [];
   private insertions: { from: number; original: string; replacement: string; target: number }[] = [];
@@ -90,9 +92,9 @@ export class NoteEditorSession implements EditorPort {
     if (update.docChanged || update.selectionSet || update.focusChanged) this.schedule();
   }
   private schedule(): void {
-    clearTimeout(this.timer);
+    window.clearTimeout(this.timer);
     if (!this.alive) return;
-    this.timer = setTimeout(() => {
+    this.timer = window.setTimeout(() => {
       if (this.view.composing) { this.schedule(); return; }
       if (this.path) this.bridge.idle(this.id);
     }, 1000);
@@ -115,8 +117,13 @@ export class NoteEditorSession implements EditorPort {
     const end = snapshot.contextFrom + snapshot.text.length;
     this.dirty = this.dirty.filter(range => range.to < snapshot.contextFrom || range.from > end);
   }
-  private allowedRanges(from: number, to: number): TextRange[] {
-    const tree = syntaxTree(this.view.state);
+  get length(): number { return this.view.state.doc.length; }
+  get head(): number { return this.view.state.selection.main.head; }
+  /** Text ranges where a link may be suggested; `parse` waits briefly for a complete syntax tree (whole-note scans). */
+  allowedRangesIn(from: number, to: number, parse = false): TextRange[] { return this.allowedRanges(from, to, parse); }
+  suppressedAt(from: number, to: number, text: string): boolean { return this.suppressions.some(record => record.from === from && record.to === to && record.text === text); }
+  private allowedRanges(from: number, to: number, parse = false): TextRange[] {
+    const tree = (parse ? ensureSyntaxTree(this.view.state, to, 200) : null) ?? syntaxTree(this.view.state);
     if (tree.length < to) return [];
     const blocked: TextRange[] = [];
     tree.iterate({ from, to, enter(node) {
@@ -166,5 +173,5 @@ export class NoteEditorSession implements EditorPort {
   forConfirmation(): EditorPort {
     return { snapshot: () => { const snapshot = this.snapshot(); return snapshot ? { ...snapshot, linkedNoteIds: this.bridge.linkedTargets(snapshot.path, this.view.state.doc.toString()) } : null; }, read: (a, b) => this.read(a, b), allows: (a, b) => this.allows(a, b), replace: (a, b, text) => this.replace(a, b, text), replaceMany: changes => this.replaceMany(changes), rememberInsertions: insertions => this.rememberInsertions(insertions), suppress: (anchor, target) => this.suppress(anchor, target) };
   }
-  destroy(): void { this.alive = false; clearTimeout(this.timer); this.suppressions = []; }
+  destroy(): void { this.alive = false; window.clearTimeout(this.timer); this.suppressions = []; }
 }

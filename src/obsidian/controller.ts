@@ -1,4 +1,4 @@
-import { Plugin, TFile, TFolder, requestUrl, parseLinktext } from 'obsidian';
+import { Plugin, TFile, TFolder, requestUrl, parseLinktext, prepareFuzzySearch } from 'obsidian';
 import { Emitter } from '../core/events';
 import { messageFor, OrganizerError } from '../core/errors';
 import { contentHash, safePath, within } from '../core/paths';
@@ -13,11 +13,14 @@ import { prepareNote } from '../filing/note-excerpt';
 import { MemoryFolderProfiles } from '../folders/profiles';
 import { SharedDecisionScheduler } from '../jev/scheduler';
 import { MemoryMetadataIndex } from '../linking/metadata-index';
-import { LocalMentionMatcher } from '../linking/mention-matcher';
+import { LocalMentionMatcher, sentenceRange } from '../linking/mention-matcher';
+import { MemoryLinkGraph } from '../linking/link-graph';
+import { searchTargets } from '../linking/target-search';
+import { normalize } from '../linking/terms';
 import { JevLinkRecommender } from '../linking/recommender';
 import { ConfirmedLinkService } from '../linking/link-service';
-import type { OrganizerController, ReviewState } from '../ui/types';
-import type { LinkConfirmation, LinkPlan, LinkProposal } from '../linking/types';
+import type { LinkMention, OrganizerController, ReviewState } from '../ui/types';
+import type { LinkConfirmation, LinkInput, LinkPlan, LinkProposal, LinkTarget, LocalMention, TextRange } from '../linking/types';
 import type { FilingEntry, FilingProposal, PersistedFilingProposal, MovePlan } from '../filing/types';
 import { EditorSessions } from './editor-extension';
 import { VaultAdapter } from './vault-adapter';
@@ -25,10 +28,19 @@ import { claimLifecycle, type LifecycleLease } from './lifecycle';
 import { estimateFilingRequests } from './analysis-estimate';
 import { filingSettingsKey, linkSettingsKey } from './settings-impact';
 
+/** Plugin ID before the rename to Homing; its data is imported once, read-only, when the new folder is empty. */
+export const LEGACY_PLUGIN_ID = 'note-organizer';
+async function legacyData(plugin: Plugin): Promise<unknown> {
+  const adapter = plugin.app.vault.adapter as Partial<Pick<typeof plugin.app.vault.adapter, 'exists' | 'read'>> | undefined;
+  const path = `${plugin.app.vault.configDir}/plugins/${LEGACY_PLUGIN_ID}/data.json`;
+  if (plugin.manifest?.id === LEGACY_PLUGIN_ID || typeof adapter?.exists !== 'function' || typeof adapter.read !== 'function') return null;
+  try { return await adapter.exists(path) ? JSON.parse(await adapter.read(path)) as unknown : null; } catch { return null; }
+}
 export class ObsidianOrganizer implements OrganizerController {
   readonly events = new Emitter();
   readonly store: PluginStateStore;
   readonly index = new MemoryMetadataIndex();
+  readonly graph = new MemoryLinkGraph();
   readonly catalog = new MemoryFolderCatalog();
   readonly vault: VaultAdapter;
   readonly editors: EditorSessions;
@@ -57,8 +69,8 @@ export class ObsidianOrganizer implements OrganizerController {
   private message: string | null = null;
   private activePath: string | null = null;
   constructor(private readonly plugin: Plugin) {
-    this.store = new PluginStateStore({ load: () => plugin.loadData(), save: data => plugin.saveData(data), loadLocal: key => plugin.app.loadLocalStorage(key), saveLocal: (key, value) => plugin.app.saveLocalStorage(key, value) });
-    this.vault = new VaultAdapter(plugin.app, this.index, () => this.settings());
+    this.store = new PluginStateStore({ load: async () => (await plugin.loadData() as unknown) ?? legacyData(plugin), save: data => plugin.saveData(data), loadLocal: key => plugin.app.loadLocalStorage(key) as unknown, saveLocal: (key, value) => plugin.app.saveLocalStorage(key, value) });
+    this.vault = new VaultAdapter(plugin.app, this.index, () => this.settings(), this.graph);
     this.editors = new EditorSessions({
       identity: path => this.vault.id(path), linkedTargets: (path, text) => this.vault.linkedTargets(path, text),
       changed: (session, path, change) => {
@@ -73,7 +85,7 @@ export class ObsidianOrganizer implements OrganizerController {
         if (this.queue?.entries().some(entry => entry.path === path && (entry.proposal !== undefined || entry.status === 'analyzing') && !['ignored', 'done', 'moving', 'review'].includes(entry.status))) this.queue.mark(path, 'waiting', 'host.contentChanged');
         this.message = null; this.events.emit();
       },
-      idle: session => { if (this.enabled() && this.settings().autoLinks) void this.analyzeLinks(session, true); },
+      idle: session => { if (this.enabled() && this.settings().autoLinks) void this.preverify(session); },
     });
   }
   initialize(): Promise<void> {
@@ -101,8 +113,8 @@ export class ObsidianOrganizer implements OrganizerController {
       eligible: path => this.vault.eligible(path), automaticEnabled: () => this.enabled() && this.settings().autoFiling,
       encodeProposal: proposal => this.encodeProposal(proposal), restoreProposal: (path, proposal) => this.restoreProposal(path, proposal),
       isEditing: path => this.editors.editing(path), persist: entries => this.store.updateQueue(entries),
-      propose: async (path, automatic, isCurrent) => {
-        const note = await this.vault.note(path, !automatic), folders = this.catalog.snapshot(), settings = this.filingRevision, requestRevision = this.requestRevision;
+      propose: async (path, automatic, isCurrent, contentSource) => {
+        const note = await this.vault.note(path, contentSource === 'editor'), folders = this.catalog.snapshot(), settings = this.filingRevision, requestRevision = this.requestRevision;
         const prepared = prepareNote(note, this.settings().longNoteStrategy);
         if (prepared.excerpt) this.excerpts.set(path, prepared.excerpt); else this.excerpts.delete(path);
         this.events.emit();
@@ -155,9 +167,21 @@ export class ObsidianOrganizer implements OrganizerController {
       else { this.removeProfilesUnder(file.path); this.vault.removeUnder(file.path); for (const entry of this.queue.entries()) if (within(entry.path, file.path)) this.queue.remove(entry.path); this.refreshFolders(); }
       this.invalidateLinks();
     }));
-    this.plugin.registerEvent(workspace.on('file-open', file => { if (!file) return; this.activePath = file.path; this.events.emit(); }));
+    this.plugin.registerEvent(workspace.on('file-open', file => {
+      const path = file?.path ?? null, changed = path !== this.activePath;
+      this.activePath = path;
+      if (path !== null && changed) this.analyzeOpened(path);
+      this.events.emit();
+    }));
     this.activePath = workspace.getActiveFile()?.path ?? null;
     void this.buildIndex();
+  }
+  /** The opening editor may still hold the previous note; read the selected file for this request. */
+  private analyzeOpened(path: string): void {
+    const settings = this.settings(), entry = this.queue.entries().find(item => item.path === path);
+    const needsAnalysis = entry === undefined || ['waiting', 'failed', 'unassigned'].includes(entry.status);
+    if (!settings.analyzeOnOpen || !settings.autoFiling || !this.enabled() || !this.vault.eligible(path) || !needsAnalysis) return;
+    this.excerpts.delete(path); this.queue.analyze(path, 'saved');
   }
   private readonly profilePaths = new Set<string>();
   private metadata(file: TFile): void {
@@ -178,7 +202,7 @@ export class ObsidianOrganizer implements OrganizerController {
         const file = files[cursor++];
         if (file && this.vault.file(file.path) === file) this.metadata(file);
       }
-      await new Promise<void>(resolve => setTimeout(resolve, 0));
+      await new Promise<void>(resolve => window.setTimeout(resolve, 0));
     }
     if (!this.disposed && generation === this.generation) { this.ready = true; this.events.emit(); }
   }
@@ -237,7 +261,7 @@ export class ObsidianOrganizer implements OrganizerController {
       }
       const folderRevision = this.catalog.snapshot().revision; this.refreshFolders();
       if ((filingChanged || (before.autoFiling && !settings.autoFiling)) && folderRevision === this.catalog.snapshot().revision) this.queue.invalidate(proposal => this.preserveProposal(proposal));
-      if (JSON.stringify(before.excludedPaths) !== JSON.stringify(settings.excludedPaths)) { this.index.clear(); this.profiles.clear(); this.profilePaths.clear(); void this.buildIndex(); }
+      if (JSON.stringify(before.excludedPaths) !== JSON.stringify(settings.excludedPaths)) { this.index.clear(); this.graph.clear(); this.verdicts.clear(); this.profiles.clear(); this.profilePaths.clear(); void this.buildIndex(); }
       this.events.emit();
     });
     this.settingsWrite = update.catch(() => undefined);
@@ -319,25 +343,172 @@ export class ObsidianOrganizer implements OrganizerController {
     });
   }
   recentMoves() { return this.store.journal.records(); }
+  // Link suggestions: local scan, cached model verdicts and user-confirmed plans (docs/link-matching.md §5–8).
+  private readonly verdicts = new Map<string, number | null>();
+  private findGeneration = 0;
+  private ignoredCache: { source: readonly string[]; terms: ReadonlySet<string> } | undefined;
+  private ignoredTerms(): ReadonlySet<string> {
+    const source = this.settings().ignoredLinkTerms;
+    if (this.ignoredCache?.source !== source) this.ignoredCache = { source, terms: new Set(source.map(term => normalize(term.trim()))) };
+    return this.ignoredCache.terms;
+  }
+  private scanRange(session: NonNullable<ReturnType<EditorSessions['get']>>, from: number, to: number, parse = false): LocalMention[] {
+    const path = session.path, noteId = path ? this.vault.id(path) : null;
+    if (!path || noteId === null) return [];
+    // Match and rank with the same bounded sentence context used by linkInput.
+    // Viewport edges must not become word boundaries or remove lexical ranking signals.
+    const start = Math.max(0, from - 240), end = Math.min(session.length, to + 240);
+    return new LocalMentionMatcher(this.index, this.graph).scan({ sourceNoteId: noteId, sourcePath: path, text: session.read(start, end), offset: start, allowedRanges: session.allowedRangesIn(start, end, parse),
+      linkedNoteIds: this.vault.linkedTargets(path), ignoredTerms: this.ignoredTerms(), allowed: target => this.vault.allowed(target.path) }).filter(mention => mention.from >= from && mention.to <= to && !session.suppressedAt(mention.from, mention.to, mention.text));
+  }
+  private linkInput(session: NonNullable<ReturnType<EditorSessions['get']>>, mention: LocalMention): LinkInput | null {
+    const path = session.path, noteId = path ? this.vault.id(path) : null, revision = session.currentRevision;
+    if (!path || noteId === null || revision === null || !this.vault.linkSource(path) || !session.allows(mention.from, mention.to) || session.read(mention.from, mention.to) !== mention.text) return null;
+    const start = Math.max(0, mention.from - 240), end = Math.min(session.length, mention.to + 240), text = session.read(start, end);
+    const range = session.allowedRangesIn(start, end).find(item => item.from <= mention.from && item.to >= mention.to);
+    if (!range) return null;
+    const local = sentenceRange(text, mention.from - start, mention.to - start, range.from - start, range.to - start);
+    return { catalogueEpoch: this.index.epoch, candidates: mention.candidates.map(candidate => candidate.target),
+      anchor: { editorSessionId: session.id, noteId, sourcePath: path, documentRevision: revision, from: mention.from, to: mention.to, originalText: mention.text, contextFrom: start + local.from, contextText: text.slice(local.from, local.to) } };
+  }
+  private verdictKey(input: LinkInput): string {
+    const anchor = input.anchor;
+    return [anchor.sourcePath, normalize(anchor.originalText), anchor.contextText, anchor.from - anchor.contextFrom, input.candidates.map(target => target.noteId + '@' + target.revision).join(','), this.linkRevision, this.settings().modelId].join('\u0000');
+  }
+  private remember(key: string, selected: number | null): void {
+    this.verdicts.delete(key); this.verdicts.set(key, selected);
+    if (this.verdicts.size > 512) this.verdicts.delete(this.verdicts.keys().next().value!);
+  }
+  scanLinks(sessionId: string, ranges: readonly TextRange[]): readonly LinkMention[] {
+    const session = this.editors.get(sessionId), path = session?.path;
+    if (!session || !path || !this.ready || this.settings().linkHints === 'off' || !this.vault.linkSource(path)) return [];
+    const result: LinkMention[] = [];
+    let budget = 20000;
+    for (const range of ranges) {
+      const to = Math.min(range.to, range.from + budget);
+      if (to <= range.from) break;
+      budget -= to - range.from;
+      for (const mention of this.scanRange(session, range.from, to)) {
+        const input = this.linkInput(session, mention);
+        if (!input) continue;
+        const verdictKey = this.verdictKey(input), verdict = this.verdicts.get(verdictKey);
+        const current = { ...mention, verdictKey };
+        // A model "no link" verdict hides the mention for this sentence.
+        if (verdict === null) continue;
+        result.push(verdict === undefined ? current : { ...current, verified: verdict });
+      }
+    }
+    return result;
+  }
+  private currentMentionInput(sessionId: string, mention: LinkMention): LinkInput {
+    const session = this.editors.get(sessionId);
+    const current = session && this.scanRange(session, mention.from, mention.to).find(item => item.from === mention.from && item.to === mention.to && item.text === mention.text);
+    const input = session && current ? this.linkInput(session, current) : null;
+    if (!input || this.verdictKey(input) !== mention.verdictKey) throw new OrganizerError('stale', 'error.linkStale');
+    return input;
+  }
+  async verifyLink(sessionId: string, mention: LinkMention): Promise<number | null> {
+    const input = this.currentMentionInput(sessionId, mention);
+    if (!this.settings().verifyOnHover) throw new OrganizerError('stale', 'error.linkStale');
+    const key = this.verdictKey(input);
+    if (this.verdicts.has(key)) return this.verdicts.get(key)!;
+    const current = this.linkScope(input);
+    const [proposal] = await this.recommender.propose([input], this.context('link'), { key: 'verify:' + sessionId, priority: 'manual', automatic: false, linkAllowance: true, isCurrent: () => this.settings().verifyOnHover && current() });
+    if (!this.settings().verifyOnHover || !current()) throw new OrganizerError('stale', 'error.linkStale');
+    const selected = proposal?.selected ?? null;
+    this.remember(key, selected); this.events.emit();
+    return selected;
+  }
+  private linkScope(input: LinkInput, automatic = false): () => boolean {
+    const requestRevision = this.requestRevision, linkRevision = this.linkRevision, epoch = this.index.epoch;
+    return () => !this.disposed && this.requestRevision === requestRevision && this.linkRevision === linkRevision && this.index.epoch === epoch && (!automatic || (this.enabled() && this.settings().autoLinks)) &&
+      this.vault.linkSource(input.anchor.sourcePath) && input.candidates.every(target => this.currentTarget(target)) &&
+      (input.anchor.editorSessionId === 'query' || (this.editors.get(input.anchor.editorSessionId)?.currentRevision === input.anchor.documentRevision && this.editors.get(input.anchor.editorSessionId)?.path === input.anchor.sourcePath));
+  }
+  linkProposalFor(sessionId: string, mention: LinkMention, targetId?: number): LinkProposal {
+    const input = this.currentMentionInput(sessionId, mention);
+    return { id: crypto.randomUUID(), input, context: this.context('link'), selected: targetId ?? mention.verified ?? mention.candidates[0]?.target.noteId ?? null };
+  }
+  ignoreLinkTerm(term: string): Promise<void> {
+    const value = term.trim();
+    if (!value || this.ignoredTerms().has(normalize(value))) return Promise.resolve();
+    return this.saveSettings({ ignoredLinkTerms: [...this.settings().ignoredLinkTerms, value] });
+  }
+  /** Background pre-check of uncertain mentions near recent edits (the optional automatic mode). */
+  private async preverify(id: string): Promise<void> {
+    const session = this.editors.get(id), snapshot = session?.snapshot({ dirtyOnly: true });
+    if (!session || !snapshot?.dirtyRanges?.length || !this.ready || !this.vault.linkSource(snapshot.path)) return;
+    const inputs = this.scanRange(session, snapshot.contextFrom, snapshot.contextFrom + snapshot.text.length).filter(mention => mention.tier === 'uncertain').flatMap(mention => {
+      const input = this.linkInput(session, mention);
+      if (!input || this.verdicts.has(this.verdictKey(input))) return [];
+      const end = input.anchor.contextFrom + input.anchor.contextText.length;
+      return snapshot.dirtyRanges!.some(range => range.from <= end && range.to >= input.anchor.contextFrom) ? [input] : [];
+    }).slice(0, 6);
+    if (!inputs.length) { session.acknowledgeAnalysis(snapshot); return; }
+    const scopes = inputs.map(input => this.linkScope(input, true));
+    try {
+      const proposals = await this.recommender.propose(inputs, this.context('link'), { key: 'link:' + id, priority: 'link', automatic: true, isCurrent: () => scopes.every(current => current()) });
+      if (!scopes.every(current => current())) return;
+      proposals.forEach((proposal, index) => this.remember(this.verdictKey(inputs[index]!), proposal.selected));
+      if (session.currentRevision === snapshot.revision) session.acknowledgeAnalysis(snapshot);
+      this.events.emit();
+    } catch { /* Automatic checks stay quiet; hovering can still ask. */ }
+  }
+  /** Manual command: the whole note, confident mentions directly and up to 24 uncertain ones checked in one batch. */
   async findLinks(): Promise<void> {
     const session = this.editors.active(this.activePath);
-    if (!session) throw new OrganizerError('missing', 'host.openEditor');
-    session.clearSuppressions(); await this.analyzeLinks(session.id, false);
+    if (!session?.path) throw new OrganizerError('missing', 'host.openEditor');
+    if (!this.ready || !this.vault.linkSource(session.path)) { this.message = 'links.empty'; this.events.emit(); return; }
+    session.clearSuppressions();
+    const generation = ++this.findGeneration, revision = session.currentRevision, sourcePath = session.path;
+    const requestRevision = this.requestRevision, linkRevision = this.linkRevision, epoch = this.index.epoch;
+    const mentions = this.scanRange(session, 0, Math.min(session.length, 200000), true);
+    const isCurrent = () => !this.disposed && generation === this.findGeneration && session.currentRevision === revision && session.path === sourcePath && this.activePath === sourcePath &&
+      this.requestRevision === requestRevision && this.linkRevision === linkRevision && this.index.epoch === epoch && this.vault.linkSource(sourcePath);
+    const head = session.head, proposals: LinkProposal[] = [];
+    for (const mention of mentions.filter(item => item.tier === 'confident')) {
+      const input = this.linkInput(session, mention);
+      if (input) proposals.push(this.linkProposalFor(session.id, { ...mention, verdictKey: this.verdictKey(input) }));
+    }
+    const uncertain = mentions.filter(item => item.tier === 'uncertain').sort((a, b) => Math.abs(a.from - head) - Math.abs(b.from - head)).slice(0, 24);
+    const inputs = uncertain.flatMap(mention => { const input = this.linkInput(session, mention); return input ? [input] : []; });
+    if (inputs.length) {
+      try {
+        const scopes = inputs.map(input => this.linkScope(input));
+        const verified = await this.recommender.propose(inputs, this.context('link'), { key: 'link:' + session.id, priority: 'manual', automatic: false, isCurrent: () => isCurrent() && scopes.every(current => current()) });
+        if (!isCurrent() || !scopes.every(current => current())) throw new OrganizerError('stale', 'error.linkStale');
+        verified.forEach((proposal, index) => this.remember(this.verdictKey(inputs[index]!), proposal.selected));
+        proposals.push(...verified.filter(proposal => proposal.selected !== null));
+      } catch (error) { this.report(error); if (!proposals.length) throw error; }
+    }
+    if (!isCurrent()) throw new OrganizerError('stale', 'error.linkStale');
+    this.links = [...this.links.filter(existing => existing.input.anchor.editorSessionId !== session.id), ...proposals.sort((a, b) => a.input.anchor.from - b.input.anchor.from)];
+    this.message = proposals.length ? null : 'links.empty'; this.events.emit();
   }
-  private async analyzeLinks(id: string, automatic: boolean): Promise<void> {
-    const session = this.editors.get(id), snapshot = session?.snapshot({ dirtyOnly: automatic });
-    if (!session || !snapshot || !this.vault.linkSource(snapshot.path) || !this.ready) return;
-    const settingsRevision = this.linkRevision, epoch = this.index.epoch, requestRevision = this.requestRevision;
-    const matcher = new LocalMentionMatcher(this.index);
-    const inputs = matcher.inputs(snapshot, target => this.vault.allowed(target.path)).filter(input => !session.suppressed(input.anchor));
-    if (!inputs.length) { session.acknowledgeAnalysis(snapshot); if (!automatic) { this.message = 'links.empty'; this.events.emit(); } return; }
-    const isCurrent = () => !this.disposed && this.requestRevision === requestRevision && (!automatic || (this.enabled() && this.settings().autoLinks)) && this.linkRevision === settingsRevision && this.index.epoch === epoch && session.currentRevision === snapshot.revision && session.path === snapshot.path && this.vault.linkSource(snapshot.path) && inputs.every(input => input.candidates.every(target => this.index.get(target.noteId)?.revision === target.revision));
-    try {
-      const proposals = await this.recommender.propose(inputs, this.context('link'), { key: 'link:' + id, priority: automatic ? 'link' : 'manual', automatic, isCurrent });
-      if (!isCurrent()) return;
-      session.acknowledgeAnalysis(snapshot);
-      this.links = [...this.links.filter(existing => !inputs.some(input => input.anchor.editorSessionId === existing.input.anchor.editorSessionId && input.anchor.from === existing.input.anchor.from && input.anchor.to === existing.input.anchor.to)), ...proposals.filter(proposal => proposal.selected !== null)]; this.message = automatic ? null : this.links.length ? null : 'links.empty'; this.events.emit();
-    } catch (error) { if (!automatic) { this.report(error); throw error; } }
+  searchLinkTargets(query: string, sourcePath: string) {
+    if (!this.ready || !this.vault.file(sourcePath) || !this.vault.linkSource(sourcePath)) return [];
+    const fuzzy = prepareFuzzySearch(query.trim());
+    return searchTargets(this.index, this.graph, { scorer: text => fuzzy(text)?.score ?? null, query, sourceNoteId: this.vault.id(sourcePath), sourcePath, allowed: target => this.vault.allowed(target.path) });
+  }
+  async verifyLinkQuery(sourcePath: string, match: string, line: string, candidates: readonly LinkTarget[], isCurrent: () => boolean): Promise<number | null> {
+    const current = () => isCurrent() && this.settings().verifyOnHover && this.vault.linkSource(sourcePath) && candidates.every(target => this.currentTarget(target));
+    if (!current()) throw new OrganizerError('stale', 'error.linkStale');
+    const at = line.indexOf(match), noteId = this.vault.id(sourcePath) ?? -1;
+    const input: LinkInput = { catalogueEpoch: this.index.epoch, candidates: candidates.slice(0, 8), anchor: { editorSessionId: 'query', noteId, sourcePath, documentRevision: 0, from: Math.max(0, at), to: Math.max(0, at) + match.length, originalText: match, contextFrom: 0, contextText: at >= 0 ? line : match } };
+    const scope = this.linkScope(input);
+    const [proposal] = await this.recommender.propose([input], this.context('link'), { key: 'query:' + sourcePath, priority: 'manual', automatic: false, linkAllowance: true, isCurrent: () => current() && scope() });
+    if (!current() || !scope()) throw new OrganizerError('stale', 'error.linkStale');
+    return proposal?.selected ?? null;
+  }
+  private currentTarget(target: LinkTarget): boolean {
+    const current = this.index.get(target.noteId);
+    return current?.revision === target.revision && current.path === target.path && this.vault.allowed(target.path);
+  }
+  linkMarkdown(target: LinkTarget, sourcePath: string, alias?: string): string {
+    if (!this.vault.linkSource(sourcePath) || !this.currentTarget(target)) throw new OrganizerError('stale', 'error.linkTargetChanged');
+    const file = this.vault.file(target.path);
+    if (!file) throw new OrganizerError('missing', 'error.linkTargetChanged');
+    return this.plugin.app.fileManager.generateMarkdownLink(file, sourcePath, undefined, alias);
   }
   prepareLink(proposal: LinkProposal, target: number): LinkPlan { return this.linker.prepare(proposal, target); }
   confirmLinks(plans: readonly LinkPlan[]): LinkConfirmation {
@@ -347,6 +518,19 @@ export class ObsidianOrganizer implements OrganizerController {
   }
   confirmLink(plan: LinkPlan): void { const result = this.confirmLinks([plan]); if (result.failures[0]) throw result.failures[0].error; }
   dismissLink(proposal: LinkProposal): void { this.editors.get(proposal.input.anchor.editorSessionId)?.suppress(proposal.input.anchor, proposal.selected); this.links = this.links.filter(item => item.id !== proposal.id); this.events.emit(); }
+  nextInboxNote(exclude?: string): string | null {
+    const open = this.filing.filter(entry => entry.path !== exclude && !['done', 'moving', 'ignored', 'review'].includes(entry.status) && this.vault.file(entry.path) && this.vault.eligible(entry.path));
+    return (open.find(entry => entry.status === 'ready') ?? open[0])?.path ?? null;
+  }
+  attachmentCount(path: string): number {
+    const file = this.vault.file(path), cache = file && this.plugin.app.metadataCache.getFileCache(file);
+    const attachments = new Set<string>();
+    for (const embed of cache?.embeds ?? []) {
+      const target = this.plugin.app.metadataCache.getFirstLinkpathDest(parseLinktext(embed.link).path, path);
+      if (target && target.extension !== 'md') attachments.add(target.path);
+    }
+    return attachments.size;
+  }
   openNote(path: string): void { void this.plugin.app.workspace.openLinkText(path, this.activePath ?? '', false); }
   target(id: number) { return this.index.get(id); }
   async testConnection(): Promise<void> { await this.settingsWrite; const requestRevision = this.requestRevision; this.scheduler.setPaused(false); await this.scheduler.evaluate({ modelId: this.settings().modelId, state: 'A short example about learning.', questions: [{ id: 'connection', instructions: 'Choose the matching subject.', options: [{ id: 'learning', description: 'Learning and reading' }, { id: 'none', description: 'Other' }] }] }, { key: 'connection', priority: 'manual', automatic: false, isCurrent: () => !this.disposed && this.requestRevision === requestRevision }); }
@@ -360,7 +544,7 @@ export class ObsidianOrganizer implements OrganizerController {
   }
   dispose(): Promise<void> {
     if (this.shutdown) return this.shutdown;
-    this.disposed = true; this.generation++; this.scheduler?.dispose(); this.queue?.dispose(); this.editors.dispose(); this.index.clear(); this.profiles.clear(); this.profilePaths.clear(); this.excerpts.clear(); this.events.clear();
+    this.disposed = true; this.generation++; this.scheduler?.dispose(); this.queue?.dispose(); this.editors.dispose(); this.index.clear(); this.graph.clear(); this.verdicts.clear(); this.profiles.clear(); this.profilePaths.clear(); this.excerpts.clear(); this.events.clear();
     this.shutdown = this.drain().finally(() => this.lifecycle?.release());
     return this.shutdown;
   }

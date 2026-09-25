@@ -39,7 +39,7 @@ function parseQueue(value: unknown): PersistedFilingEntry[] {
 function parseRecord(value: unknown): MoveRecord {
   const v = object(value);
   if (typeof v.id !== 'string' || !v.id || !integer(v.noteId) || !path(v.from) || !path(v.to) || typeof v.contentHash !== 'string' || !v.contentHash || !integer(v.createdAt) || !['intent', 'done', 'undone', 'review', 'archived'].includes(String(v.status)) || (v.message !== undefined && typeof v.message !== 'string')) throw storageError();
-  return { id: v.id, noteId: v.noteId, from: v.from, to: v.to, contentHash: v.contentHash, createdAt: v.createdAt, status: v.status as MoveRecord['status'], ...(v.message === undefined ? {} : { message: v.message as string }) };
+  return { id: v.id, noteId: v.noteId, from: v.from, to: v.to, contentHash: v.contentHash, createdAt: v.createdAt, status: v.status as MoveRecord['status'], ...(v.message === undefined ? {} : { message: v.message }) };
 }
 function parseUsage(value: unknown): DailyUsage {
   const v = object(value);
@@ -91,7 +91,7 @@ export class PluginStateStore implements StateStore {
         if ((v.schemaVersion !== 1 && v.schemaVersion !== 2) || !Array.isArray(v.moveJournal)) throw storageError();
         const settings = object(v.settings);
         for (const [key, defaultValue] of Object.entries(DEFAULT_SETTINGS)) {
-          if (!(key in settings) && ['provider', 'endpoint', 'longNoteStrategy', 'folderProfilesEnabled'].includes(key)) continue;
+          if (!(key in settings) && ['provider', 'endpoint', 'longNoteStrategy', 'folderProfilesEnabled', 'linkHints', 'explorerMarkers', 'analyzeOnOpen', 'verifyOnHover', 'ignoredLinkTerms'].includes(key)) continue;
           if (!(key in settings) || settings[key] === null || (Array.isArray(defaultValue) ? !Array.isArray(settings[key]) : typeof settings[key] !== typeof defaultValue)) throw storageError();
         }
         const records = v.moveJournal.map(parseRecord);

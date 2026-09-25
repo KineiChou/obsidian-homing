@@ -1,9 +1,10 @@
 import { OrganizerError } from './core/errors';
 import { safePath } from './core/paths';
 
-export type DecisionProvider = 'jev' | 'openai-compatible' | 'anthropic' | 'ollama';
+export type DecisionProvider = 'jev' | 'openrouter' | 'openai-compatible' | 'anthropic' | 'ollama';
 export const PROVIDER_DEFAULTS = {
   jev: { endpoint: 'https://api.typesafe.ai/v1', modelId: 'jev-1.13.0', name: 'TypeSafe Jev' },
+  openrouter: { endpoint: 'https://openrouter.ai/api/v1', modelId: 'openai/gpt-4.1-mini', name: 'OpenRouter' },
   'openai-compatible': { endpoint: 'https://api.openai.com/v1', modelId: 'gpt-4.1-mini', name: 'OpenAI compatible' },
   ollama: { endpoint: 'http://127.0.0.1:11434/v1', modelId: 'qwen3:1.7b', name: 'Ollama' },
   anthropic: { endpoint: 'https://api.anthropic.com/v1', modelId: 'claude-sonnet-4-6', name: 'Anthropic' },
@@ -28,12 +29,18 @@ export interface OrganizerSettings {
   readonly folderRules: readonly FolderRule[];
   readonly dailyRequestLimit: number;
   readonly modelId: string;
+  readonly linkHints: LinkHintStyle;
+  readonly explorerMarkers: boolean;
+  readonly analyzeOnOpen: boolean;
+  readonly verifyOnHover: boolean;
+  readonly ignoredLinkTerms: readonly string[];
 }
+export type LinkHintStyle = 'underline' | 'marker' | 'off';
 export const DEFAULT_SETTINGS: OrganizerSettings = {
   provider: 'jev', endpoint: PROVIDER_DEFAULTS.jev.endpoint, longNoteStrategy: 'excerpt', folderProfilesEnabled: false,
   inbox: '', includeSubfolders: true, secretName: '', autoFiling: true, autoLinks: false,
   linkScope: 'vault', excludedPaths: [], excludedDestinations: [], folderRules: [],
-  dailyRequestLimit: 100, modelId: 'jev-1.13.0',
+  dailyRequestLimit: 100, modelId: 'jev-1.13.0', linkHints: 'underline', explorerMarkers: true, analyzeOnOpen: true, verifyOnHover: true, ignoredLinkTerms: [],
 };
 
 export function parseSettings(value: unknown): OrganizerSettings {
@@ -59,11 +66,15 @@ export function parseSettings(value: unknown): OrganizerSettings {
   const linkScope = v.linkScope ?? 'vault';
   if (linkScope !== 'vault' && linkScope !== 'inbox') return fail();
   const provider = v.provider ?? 'jev';
-  if (provider !== 'jev' && provider !== 'openai-compatible' && provider !== 'anthropic' && provider !== 'ollama') return fail();
+  if (provider !== 'jev' && provider !== 'openrouter' && provider !== 'openai-compatible' && provider !== 'anthropic' && provider !== 'ollama') return fail();
   const modelId = string('modelId', PROVIDER_DEFAULTS[provider].modelId);
   if (!modelId.trim() || modelId.length > 200 || (provider === 'jev' && modelId !== DEFAULT_SETTINGS.modelId)) return fail();
   const endpoint = validateEndpoint(string('endpoint', PROVIDER_DEFAULTS[provider].endpoint));
   if (provider === 'jev' && endpoint !== PROVIDER_DEFAULTS.jev.endpoint) return fail();
+  const ignored = v.ignoredLinkTerms ?? [];
+  if (!Array.isArray(ignored) || ignored.length > 1000 || ignored.some(term => typeof term !== 'string' || !term.trim() || term.length > 64)) return fail();
+  const linkHints = v.linkHints ?? 'underline';
+  if (linkHints !== 'underline' && linkHints !== 'marker' && linkHints !== 'off') return fail();
   const longNoteStrategy = v.longNoteStrategy ?? 'excerpt';
   if (longNoteStrategy !== 'excerpt' && longNoteStrategy !== 'full') return fail();
   return {
@@ -71,7 +82,8 @@ export function parseSettings(value: unknown): OrganizerSettings {
     inbox: safePath(string('inbox', ''), true), secretName: string('secretName', ''),
     includeSubfolders: boolean('includeSubfolders', true), autoFiling: boolean('autoFiling', true), autoLinks: boolean('autoLinks', false),
     linkScope, excludedPaths: paths('excludedPaths'), excludedDestinations: paths('excludedDestinations'), folderRules,
-    dailyRequestLimit: Number(limit), modelId,
+    dailyRequestLimit: Number(limit), modelId, linkHints, explorerMarkers: boolean('explorerMarkers', true), analyzeOnOpen: boolean('analyzeOnOpen', true),
+    verifyOnHover: boolean('verifyOnHover', true), ignoredLinkTerms: [...new Set((ignored as string[]).map(term => term.trim()))],
   };
 }
 function fail(): never { throw new OrganizerError('invalid-settings', 'error.settingsInvalid'); }

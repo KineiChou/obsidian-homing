@@ -1,7 +1,9 @@
 import type { OrganizerError } from '../core/errors';
 import type { DecisionContext, RequestScope } from '../jev/types';
 export interface LinkTarget { readonly noteId: number; readonly path: string; readonly title: string; readonly aliases: readonly string[]; readonly tags: readonly string[]; readonly description: string; readonly revision: number }
-export interface Match { readonly from: number; readonly to: number; readonly text: string; readonly noteIds: readonly number[] }
+/** How a matched term relates to its note (docs/link-matching.md §2). */
+export type TermKind = 'title' | 'alias' | 'inflection' | 'derived';
+export interface Match { readonly from: number; readonly to: number; readonly text: string; readonly noteIds: readonly number[]; readonly kinds: Readonly<Record<number, TermKind>> }
 export interface MatchResult { readonly matches: readonly Match[]; readonly limited: boolean }
 export interface MetadataIndex {
   readonly epoch: number;
@@ -10,7 +12,31 @@ export interface MetadataIndex {
   remove(noteId: number): void;
   get(noteId: number): LinkTarget | undefined;
   match(text: string, offset?: number): MatchResult;
+  /** Indexed notes with their normalized terms, for explicit `[[?` searches. */
+  documents(): Iterable<{ readonly target: LinkTarget; readonly terms: ReadonlyMap<string, TermKind> }>;
   clear(): void;
+}
+/** Link statistics from resolved metadata only; no note bodies (§4). */
+export interface LinkGraph {
+  replaceSource(sourceId: number, links: readonly { readonly targetId: number; readonly anchor: string }[]): void;
+  removeNote(noteId: number): void;
+  anchorCounts(anchor: string): ReadonlyMap<number, number>;
+  relatedness(sourceId: number, targetId: number): number;
+  clear(): void;
+}
+export type MentionTier = 'confident' | 'uncertain';
+export interface RankedCandidate { readonly target: LinkTarget; readonly kind: TermKind; readonly score: number; readonly commonness: number; readonly related: number }
+/** A locally found mention with absolute document offsets. */
+export interface LocalMention { readonly from: number; readonly to: number; readonly text: string; readonly tier: MentionTier; readonly candidates: readonly RankedCandidate[] }
+export interface ScanRequest {
+  readonly sourceNoteId: number;
+  readonly sourcePath: string;
+  readonly text: string;
+  readonly offset: number;
+  readonly allowedRanges: readonly TextRange[];
+  readonly linkedNoteIds: ReadonlySet<number>;
+  readonly ignoredTerms: ReadonlySet<string>;
+  allowed(target: LinkTarget): boolean;
 }
 export interface TextAnchor { readonly editorSessionId: string; readonly noteId: number; readonly sourcePath: string; readonly documentRevision: number; readonly from: number; readonly to: number; readonly originalText: string; readonly contextFrom: number; readonly contextText: string }
 export interface LinkInput { readonly anchor: TextAnchor; readonly catalogueEpoch: number; readonly candidates: readonly LinkTarget[] }

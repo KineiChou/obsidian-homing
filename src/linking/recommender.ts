@@ -70,7 +70,7 @@ export class JevLinkRecommender implements LinkRecommender {
     const bytes = Math.max(byteLength(key), key.length * 2) + 64;
     if (bytes > MAX_BYTES) return;
     while (this.cache.size >= MAX_ENTRIES || this.cacheBytes + bytes > MAX_BYTES) {
-      const oldest = this.cache.keys().next().value as string | undefined;
+      const oldest = this.cache.keys().next().value;
       if (oldest === undefined) break;
       this.cacheBytes -= this.cache.get(oldest)!.bytes;
       this.cache.delete(oldest);

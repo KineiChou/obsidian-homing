@@ -55,8 +55,8 @@ jobs:
           gh release create "$RELEASE_TAG"
           assets/main.js assets/manifest.json assets/styles.css
           --repo "$RELEASE_REPOSITORY" --verify-tag
-          --title "$RELEASE_TAG" --draft --prerelease
-          --notes "Development preview. Review host validation and release requirements before publication."
+          --title "$RELEASE_TAG" --draft
+          --notes "Draft created by the release workflow. Replace these notes and review the assets before publishing."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ github.ref_name }}

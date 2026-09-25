@@ -7,7 +7,7 @@ import type { MarkdownFileInfo, Plugin as ObsidianPlugin } from 'obsidian';
 import { ObsidianOrganizer } from '../src/obsidian/controller';
 import { contentHash } from '../src/core/paths';
 import { filingSettingsKey } from '../src/obsidian/settings-impact';
-import { filingBanner } from '../src/ui/filing-banner';
+import { filingPills } from '../src/ui/filing-pill';
 import { DEFAULT_SETTINGS } from '../src/settings';
 import { FakeApp, Plugin, TFolder, editorInfoField, requestUrl } from './fakes/obsidian';
 
@@ -22,10 +22,13 @@ it('invalidates the actual queue on unsaved editing so folder events cannot revi
   expect(controller.state().filing[0]?.status).toBe('ready');
   const info = { file, editor: { getValue: () => view.state.doc.toString() } } as unknown as MarkdownFileInfo;
   app.workspace.activeEditor = info;
-  const view = new EditorView({ parent: document.body, state: EditorState.create({ doc: file.body, extensions: [markdown(), editorInfoField.init(() => info), controller.editors.extension, filingBanner(controller, () => undefined)] }) });
+  const view = new EditorView({ parent: document.body, state: EditorState.create({ doc: file.body, extensions: [markdown(), editorInfoField.init(() => info), controller.editors.extension] }) });
+  const surface = document.body.appendChild(document.createElement('div'));
+  const pills = filingPills(controller, { chooseDestination: () => undefined, menu: () => undefined });
+  cleanup.push(pills.attach({ parent: surface, file: () => file, hasFocus: () => false, focusNote: () => undefined, openNote: () => undefined }));
   cleanup.push(() => { view.destroy(); controller.dispose(); plugin.unload(); });
   await Promise.resolve(); await Promise.resolve();
-  expect(view.dom.querySelector('.note-organizer-banner')?.textContent).toContain('Resources');
+  expect(surface.querySelector('.note-organizer-pill')?.textContent).toContain('→ Resources');
   expect(view.hasFocus).toBe(false);
   const savesBeforeEdit = plugin.saveData.mock.calls.length;
   view.dispatch({ changes: { from: file.body.length, insert: ' changed' } });
@@ -34,15 +37,16 @@ it('invalidates the actual queue on unsaved editing so folder events cannot revi
   for (let i = 0; i < 20; i++) view.dispatch({ changes: { from: view.state.doc.length, insert: 'x' } });
   await Promise.resolve(); await Promise.resolve();
   expect(plugin.saveData.mock.calls.length).toBe(savesBeforeEdit + 1);
-  expect((view.dom.querySelector('.note-organizer-banner') as HTMLElement).hidden).toBe(true);
+  expect(surface.querySelector('.note-organizer-pill')?.textContent).not.toContain('Resources');
   expect(controller.state().filing[0]?.proposal).toBeUndefined();
   await app.vault.createFolder('Other'); expect(controller.state().filing[0]?.status).toBe('waiting'); expect(controller.state().filing[0]?.proposal).toBeUndefined(); expect(requestUrl).not.toHaveBeenCalled();
 });
 
-it('uses sentence-only cached decisions, maps visible suggestions and confirms selected links atomically', async () => {
+it('links clear mentions locally, asks once for an ambiguous one with sentence-only context, and confirms atomically', async () => {
   vi.useFakeTimers(); vi.clearAllMocks(); vi.stubGlobal('requestAnimationFrame', () => 0); vi.stubGlobal('cancelAnimationFrame', () => undefined);
   const app = new FakeApp(); const file = app.add('Inbox/source.md', 'Private unrelated sentence.Transformer explains this. Attention supports this. Learning matters.');
   for (const name of ['Transformer', 'Attention', 'Learning']) app.add(`Resources/${name}.md`);
+  app.add('Power/Transformer.md');
   app.files.set('Inbox', new TFolder('Inbox')); app.files.set('Resources', new TFolder('Resources'));
   const plugin = new Plugin(app); plugin.data = { schemaVersion: 2, settings: { ...DEFAULT_SETTINGS, inbox: 'Inbox', secretName: 'key', autoFiling: false }, filingQueue: [], moveJournal: [] };
   const controller = new ObsidianOrganizer(plugin as unknown as ObsidianPlugin); await controller.initialize();
@@ -69,7 +73,9 @@ it('uses sentence-only cached decisions, maps visible suggestions and confirms s
   await vi.waitFor(() => expect(controller.state().indexReady).toBe(true));
   await controller.findLinks();
   expect(controller.state().links).toHaveLength(3);
+  // Attention and Learning are unique titles; only the two Transformer notes needed the model.
   expect(requestUrl).toHaveBeenCalledTimes(1);
+  expect(Object.keys((JSON.parse(requestUrl.mock.calls[0]![0].body) as { questions: object }).questions)).toHaveLength(1);
   expect(requestUrl.mock.calls[0]![0].body).not.toContain('Private unrelated sentence');
   const previous = controller.state().links.map(link => link.id);
   view.dispatch({ changes: { from: 0, insert: 'Changed ' } });

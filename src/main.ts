@@ -1,10 +1,15 @@
-import { Plugin, Notice, getLanguage, setIcon, type WorkspaceLeaf } from 'obsidian';
+import { MarkdownView, Menu, Notice, Plugin, getLanguage, setIcon } from 'obsidian';
 import { ObsidianOrganizer } from './obsidian/controller';
-import { OrganizerReviewView, REVIEW_VIEW, LEGACY_REVIEW_VIEW } from './ui/review-view';
+import { registerExplorerIntegration } from './obsidian/explorer-integration';
+import { RetiredReviewView, REVIEW_VIEW, LEGACY_REVIEW_VIEW } from './ui/review-view';
 import { OrganizerSettingsTab } from './ui/settings-tab';
 import { LinkSuggestionsModal } from './ui/link-modal';
-import { filingBanner } from './ui/filing-banner';
-import { DestinationPicker } from './ui/target-picker';
+import { AnalysisModal } from './ui/analysis-modal';
+import { InboxModal } from './ui/inbox-modal';
+import { filingPills, type FilingPills } from './ui/filing-pill';
+import { linkHints } from './ui/link-hints';
+import { LinkQuerySuggest } from './ui/link-query-suggest';
+import { DestinationPicker, TargetPicker } from './ui/target-picker';
 import { errorText, setLocale, t } from './i18n';
 
 export default class NoteOrganizerPlugin extends Plugin {
@@ -16,17 +21,42 @@ export default class NoteOrganizerPlugin extends Plugin {
     const organizer = new ObsidianOrganizer(this);
     this.organizer = organizer;
     try { await organizer.initialize(); }
-    catch (error) { organizer.dispose(); if (this.lifecycle === lifecycle) { this.organizer = null; new Notice(errorText(error)); } return; }
-    if (this.lifecycle !== lifecycle || this.organizer !== organizer) { organizer.dispose(); return; }
-    this.registerView(REVIEW_VIEW, leaf => new OrganizerReviewView(leaf, organizer));
-    this.registerView(LEGACY_REVIEW_VIEW, leaf => new OrganizerReviewView(leaf, organizer, LEGACY_REVIEW_VIEW));
+    catch (error) { void organizer.dispose(); if (this.lifecycle === lifecycle) { this.organizer = null; new Notice(errorText(error)); } return; }
+    if (this.lifecycle !== lifecycle || this.organizer !== organizer) { void organizer.dispose(); return; }
+    // Earlier versions opened an organizer tab; restored layouts close it instead of showing an error view.
+    this.registerView(REVIEW_VIEW, leaf => new RetiredReviewView(leaf, REVIEW_VIEW));
+    this.registerView(LEGACY_REVIEW_VIEW, leaf => new RetiredReviewView(leaf, LEGACY_REVIEW_VIEW));
     this.addSettingTab(new OrganizerSettingsTab(this.app, this, organizer));
-    this.registerEditorExtension(filingBanner(organizer, choose => new DestinationPicker(this.app, organizer, choose).open()));
+
+    const chooseDestination = (choose: (id: string) => void) => new DestinationPicker(this.app, organizer, choose).open();
+    const analyze = (paths?: readonly string[]) => new AnalysisModal(this.app, organizer, paths).open();
+    const organize = (preselect?: readonly string[]) => new InboxModal(this.app, organizer, { chooseDestination, openNote: path => organizer.openNote(path), analyze }, preselect).open();
+    const pills = filingPills(organizer, {
+      chooseDestination,
+      menu: (anchor, items) => {
+        const menu = new Menu(); for (const item of items) menu.addItem(value => value.setTitle(item.title).onClick(() => item.run()));
+        const rect = anchor.getBoundingClientRect(); menu.showAtPosition({ x: rect.left, y: rect.bottom }, anchor.ownerDocument);
+      },
+    });
+    const hints = linkHints(organizer, {
+      sessionId: view => organizer.editors.sessionFor(view)?.id,
+      chooseTarget: (candidates, choose) => new TargetPicker(this.app, candidates, target => target.path, target => choose(target.noteId)).open(),
+    });
+    this.registerEditorExtension(hints.extension);
+    const query = new LinkQuerySuggest(this.app, organizer);
+    this.registerEditorSuggest(query);
+    this.register(() => query.close());
+    // `[[?` starts like a native `[[` link; put this suggest first when the (internal) list is available.
+    const suggests = (this.app.workspace as unknown as { editorSuggest?: { suggests?: unknown[] } }).editorSuggest?.suggests;
+    if (Array.isArray(suggests) && suggests.indexOf(query) > 0) { suggests.splice(suggests.indexOf(query), 1); suggests.unshift(query); }
+    this.attachPills(pills);
+    registerExplorerIntegration(this, organizer, { eligible: path => organizer.vault.eligible(path), organize, analyze, chooseDestination });
+
     const status = this.addStatusBarItem(); status.classList.add('note-organizer-statusbar');
     const open = status.createEl('button', { cls: 'note-organizer-status' }); open.type = 'button';
     const icon = open.createSpan(), count = open.createSpan();
     const links = status.createEl('button', { cls: 'note-organizer-status' }); links.type = 'button';
-    this.registerDomEvent(open, 'click', () => { void this.openReview(); });
+    this.registerDomEvent(open, 'click', () => organize());
     this.registerDomEvent(links, 'click', () => new LinkSuggestionsModal(this.app, organizer).open());
     const update = () => {
       const state = organizer.state(), ready = state.filing.filter(entry => entry.status === 'ready').length;
@@ -37,36 +67,42 @@ export default class NoteOrganizerPlugin extends Plugin {
       links.hidden = linkCount === 0; links.textContent = t('links.count', { count: linkCount }); links.setAttribute('aria-label', t('links.title'));
     };
     this.register(organizer.subscribe(update)); update();
-    this.addCommand({ id: 'open-review', name: t('command.open'), callback: () => { void this.openReview(); } });
-    this.addCommand({ id: 'analyze-note', name: t('command.analyze'), checkCallback: checking => { const path = this.app.workspace.getActiveFile()?.path; if (!path || !organizer.vault.eligible(path)) return false; if (!checking) { organizer.analyzeNote(path); void this.openReview(); } return true; } });
+
+    this.addCommand({ id: 'open-review', name: t('command.open'), callback: () => organize() });
+    this.addCommand({ id: 'file-note', name: t('command.file'), checkCallback: checking => pills.open(this.app.workspace.getActiveFile()?.path ?? null, checking) });
+    this.addCommand({ id: 'analyze-note', name: t('command.analyze'), checkCallback: checking => { const path = this.app.workspace.getActiveFile()?.path; if (!path || !organizer.vault.eligible(path)) return false; if (!checking) organizer.analyzeNote(path); return true; } });
     this.addCommand({ id: 'find-links', name: t('links.find'), callback: () => { void organizer.findLinks().then(() => new LinkSuggestionsModal(this.app, organizer).open()).catch(error => new Notice(errorText(error))); } });
+    this.addCommand({ id: 'accept-link', name: t('command.acceptLink'), checkCallback: checking => hints.acceptAtCursor(checking) });
     this.addCommand({ id: 'toggle-automatic', name: t('command.toggle'), callback: () => organizer.setEnabled(!organizer.enabled()) });
     this.app.workspace.onLayoutReady(() => {
       if (this.organizer !== organizer) return;
-      for (const leaf of this.app.workspace.getLeavesOfType(REVIEW_VIEW)) if (!(leaf.view instanceof OrganizerReviewView)) void this.refreshReview(leaf).catch(error => new Notice(errorText(error)));
-      const legacy = this.app.workspace.getLeavesOfType(LEGACY_REVIEW_VIEW);
-      if (!legacy.length) return;
-      for (const leaf of legacy) leaf.detach();
-      void this.openReview();
+      for (const type of [REVIEW_VIEW, LEGACY_REVIEW_VIEW]) for (const leaf of this.app.workspace.getLeavesOfType(type)) leaf.detach();
     });
   }
-  private async openReview(): Promise<void> {
+  /** Gives every Markdown view a pill in its content container, in every view mode. */
+  private attachPills(pills: FilingPills): void {
+    const attached = new Map<MarkdownView, () => void>();
     const lifecycle = this.lifecycle;
-    if (!this.organizer) return;
-    const leaf = this.app.workspace.getLeavesOfType(REVIEW_VIEW)[0] ?? this.app.workspace.getLeaf('tab');
-    if (await this.refreshReview(leaf) && lifecycle === this.lifecycle) await this.app.workspace.revealLeaf(leaf);
+    const sync = () => {
+      if (this.lifecycle !== lifecycle) return;
+      const views = this.app.workspace.getLeavesOfType('markdown').map(leaf => leaf.view).filter((view): view is MarkdownView => view instanceof MarkdownView);
+      for (const [view, detach] of attached) if (!views.includes(view)) { detach(); attached.delete(view); }
+      for (const view of views) if (!attached.has(view)) attached.set(view, pills.attach({
+        parent: view.contentEl,
+        file: () => view.file,
+        hasFocus: () => view.containerEl.contains(view.containerEl.ownerDocument.activeElement),
+        focusNote: () => { if (view.getMode() === 'source') view.editor.focus(); },
+        // The next inbox note opens in the same pane, so reviewing the inbox never needs a separate view.
+        openNote: path => { const file = this.app.vault.getFileByPath(path); if (file) void view.leaf.openFile(file); },
+      }));
+      pills.refresh();
+    };
+    this.registerEvent(this.app.workspace.on('layout-change', sync));
+    this.registerEvent(this.app.workspace.on('file-open', sync));
+    this.registerEvent(this.app.workspace.on('active-leaf-change', sync));
+    this.registerEvent(this.app.workspace.on('resize', () => pills.refresh()));
+    this.app.workspace.onLayoutReady(sync);
+    this.register(() => { for (const detach of attached.values()) detach(); attached.clear(); });
   }
-  private async refreshReview(leaf: WorkspaceLeaf): Promise<boolean> {
-    const lifecycle = this.lifecycle, organizer = this.organizer;
-    const current = () => !!organizer && this.organizer === organizer && this.lifecycle === lifecycle;
-    if (!current()) return false;
-    // Hot reload can retain a view from the previous plugin instance. Recreate its controller binding.
-    if (leaf.view.getViewType() === REVIEW_VIEW && !(leaf.view instanceof OrganizerReviewView)) {
-      await leaf.setViewState({ type: 'empty' });
-      if (!current()) return false;
-    }
-    await leaf.setViewState({ type: REVIEW_VIEW });
-    return current();
-  }
-  onunload(): void { this.lifecycle++; this.organizer?.dispose(); this.organizer = null; }
+  onunload(): void { this.lifecycle++; void this.organizer?.dispose(); this.organizer = null; }
 }

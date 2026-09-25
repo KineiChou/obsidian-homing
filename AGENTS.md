@@ -1,7 +1,7 @@
-# Note Organizer
+# Homing（归位，原 Note Organizer）
 
 - 使用中文与用户沟通，遵循已有产品设计和 `docs/development.md` 中的模块契约。
-- `main` 是已验证交付，`dev` 是集成，具体实现使用 `feat/*`。远程仓库为 GitHub `KineiChou/obsidian-note-organizer`（public）：`main`、`dev` 通过验证后可推送，`feat/*` 与标签／Release 需用户另行同意；任务来源见 GitHub issues。
+- `main` 是已验证交付，`dev` 是集成，具体实现使用 `feat/*`。远程仓库为 GitHub `KineiChou/obsidian-homing`（public，原名 `obsidian-note-organizer`，旧地址自动跳转）：`main`、`dev` 通过验证后可推送，`feat/*` 与标签／Release 需用户另行同意；任务来源见 GitHub issues。
 - 领域模块只依赖所属领域的接口，不导入 `obsidian` 或使用 Node 文件系统。
 - 禁止模型响应直接驱动写入。移动和插入必须经过用户确认的计划 ID，执行时再次校验版本。
 - 按原始 UTF-16 偏移写入编辑器。Jev 调用经过共享调度、预算和过期校验。

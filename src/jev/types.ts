@@ -9,7 +9,8 @@ export interface HttpResponse { readonly status: number; readonly headers: Reado
 export interface HttpTransport { post(url: string, headers: Readonly<Record<string, string>>, body: string): Promise<HttpResponse> }
 export interface SecretProvider { get(): string | null }
 export interface DecisionContext { readonly taskId: string; readonly settingsRevision: number; readonly promptRevision: number; readonly modelId: string }
-export interface RequestScope { readonly key: string; readonly priority: 'manual' | 'link' | 'filing'; readonly automatic: boolean; isCurrent(): boolean }
+/** `linkAllowance` counts a user-initiated link check (hover, `[[?`) toward the automatic-link share of the daily limit. */
+export interface RequestScope { readonly key: string; readonly priority: 'manual' | 'link' | 'filing'; readonly automatic: boolean; readonly linkAllowance?: boolean; isCurrent(): boolean }
 export interface DailyUsage { readonly day: string; readonly requests: number; readonly inputTokens: number; readonly unknownRequests: number; readonly automaticLinkRequests?: number }
 export interface UsageStore {
   read(): DailyUsage;
