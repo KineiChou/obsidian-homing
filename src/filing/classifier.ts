@@ -98,6 +98,7 @@ export class MixedDepthClassifier implements FolderClassifier {
       id: crypto.randomUUID(), source: { ...note.source }, foldersRevision: folders.revision, context: { ...context },
       selected: answer.selected === UNASSIGNED ? null : answer.selected,
       ranked: finalists.map(target => ({ targetId: target.id, probability: answer.probabilities[target.id]! })).sort((a, b) => b.probability - a.probability || a.targetId.localeCompare(b.targetId)),
+      ...(answer.rankOnly ? { rankOnly: true } : {}),
     };
     return proposal;
   }

@@ -28,7 +28,10 @@ function parseProposal(value: unknown): PersistedFilingProposal | undefined {
       if (!integer(e.originalChars) || !integer(e.sentChars) || e.sentChars > e.originalChars) return undefined;
       excerpt = { originalChars: e.originalChars, sentChars: e.sentChars };
     }
-    return { contentHash: v.contentHash, selectedPath: v.selectedPath, ranked, modelId: v.modelId, promptRevision: v.promptRevision, settingsFingerprint: v.settingsFingerprint, createdAt: v.createdAt, ...(excerpt ? { excerpt } : {}) };
+    if (v.rankOnly !== undefined && typeof v.rankOnly !== 'boolean') return undefined;
+    // Before 0.2.8 every non-Jev provider stored ordinal ranking weights without saying so.
+    const rankOnly = typeof v.rankOnly === 'boolean' ? v.rankOnly : !v.modelId.startsWith('jev-');
+    return { contentHash: v.contentHash, selectedPath: v.selectedPath, ranked, modelId: v.modelId, promptRevision: v.promptRevision, settingsFingerprint: v.settingsFingerprint, createdAt: v.createdAt, rankOnly, ...(excerpt ? { excerpt } : {}) };
   } catch { return undefined; }
 }
 function parseQueue(value: unknown): PersistedFilingEntry[] {

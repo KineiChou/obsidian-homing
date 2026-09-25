@@ -1,4 +1,4 @@
-export type ErrorCode = 'invalid-settings' | 'invalid-response' | 'authentication' | 'rate-limit' | 'service' | 'network' | 'budget' | 'cancelled' | 'timeout' | 'stale' | 'conflict' | 'storage' | 'limit' | 'missing' | 'unsafe';
+export type ErrorCode = 'invalid-settings' | 'invalid-response' | 'format' | 'authentication' | 'rate-limit' | 'service' | 'network' | 'budget' | 'cancelled' | 'timeout' | 'stale' | 'conflict' | 'storage' | 'limit' | 'missing' | 'unsafe';
 
 export class OrganizerError extends Error {
   constructor(readonly code: ErrorCode, readonly messageKey: string, readonly retryAfterMs = 0, readonly params: Readonly<Record<string, string | number>> = {}) {

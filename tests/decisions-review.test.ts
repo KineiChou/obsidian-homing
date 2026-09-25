@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { prepareNote } from '../src/filing/note-excerpt';
 import { MixedDepthClassifier } from '../src/filing/classifier';
 import { MemoryFolderProfiles } from '../src/folders/profiles';
-import { createDecisionClient, parseRankedResponse } from '../src/providers/client';
+import { createDecisionClient, parseStructuredResponse } from '../src/providers/client';
 import { DEFAULT_SETTINGS, parseSettings } from '../src/settings';
 import { byteLength } from '../src/jev/request';
 import type { ChoiceBatch, DecisionScheduler, HttpTransport } from '../src/jev/types';
@@ -50,7 +50,7 @@ describe('ranked provider boundary', () => {
     await expect(client.evaluate(batch)).rejects.toMatchObject({ code: 'invalid-response' });
   });
   it.each([['yes', 'outside'], ['yes', 'yes'], ['no', 'yes'], ['yes']])('rejects invalid ranking %j', (...ranking) => {
-    expect(() => parseRankedResponse(JSON.stringify({ answers: { pick: { choice: 'yes', ranking } } }), batch, null)).toThrow();
+    expect(() => parseStructuredResponse(JSON.stringify({ answers: { pick: { choice: 'yes', ranking } } }), batch, null)).toThrow();
   });
   it.each([[401, 'authentication'], [429, 'rate-limit'], [503, 'service']])('maps status %s for scheduling', async (status, code) => {
     const client = createDecisionClient({ post: async () => ({ status: Number(status), headers: { 'retry-after': '2' }, json: { private: 'do not expose' } }) }, { get: () => 'synthetic-key' }, () => ({ provider: 'openai-compatible', endpoint: 'https://example.com/v1' }));
@@ -138,11 +138,9 @@ describe('explicit Ollama structured output', () => {
     expect(request.response_format).toMatchObject({ type: 'json_schema', json_schema: { strict: true } });
     expect(request.response_format).toHaveProperty('json_schema.schema.additionalProperties', false);
     expect(request.response_format).toHaveProperty('json_schema.schema.properties.answers.required', ['pick']);
-    expect(request.response_format).toHaveProperty('json_schema.schema.properties.answers.properties.pick', {
-      type: 'object', required: ['choice', 'ranking'], additionalProperties: false,
-      properties: { choice: { type: 'string', enum: ['yes', 'no'] }, ranking: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'string', enum: ['yes', 'no'] } } },
-    });
-    expect(JSON.parse(post.mock.calls[1]![2]!).response_format).toEqual({ type: 'json_object' });
+    expect(request.response_format).toHaveProperty('json_schema.schema.properties.answers.properties.pick', { type: 'object', additionalProperties: false, required: ['choice', 'probabilities'], properties: { choice: { type: 'string', enum: ['yes', 'no'] }, probabilities: { type: 'object', additionalProperties: false, required: ['yes', 'no'], properties: { yes: { type: 'integer' }, no: { type: 'integer' } } } } });
+    // Generic compatible servers also try structured output first; unsupported ones fall back (see structured-output.test.ts).
+    expect(JSON.parse(post.mock.calls[1]![2]!).response_format).toMatchObject({ type: 'json_schema', json_schema: { strict: true } });
   });
   it.each([
     { answers: { pick: { choice: 'no', ranking: ['yes', 'no'] } } },
@@ -151,6 +149,8 @@ describe('explicit Ollama structured output', () => {
     { answers: { wrong: { choice: 'yes', ranking: ['yes', 'no'] } } },
   ])('still rejects contradictory, duplicate, outside or wrong-question model output', async response => {
     const client = createDecisionClient({ post: async () => ({ status: 200, headers: {}, json: { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(response) } }] } }) }, { get: () => null }, () => ({ provider: 'ollama', endpoint: 'http://127.0.0.1:11579/v1' }));
+    // One compatible-mode retry is offered; the same answer is still rejected.
+    await expect(client.evaluate(batch)).rejects.toMatchObject({ code: 'format' });
     await expect(client.evaluate(batch)).rejects.toMatchObject({ code: 'invalid-response' });
   });
   it('does not send keyless requests to remote Ollama hosts', async () => {
