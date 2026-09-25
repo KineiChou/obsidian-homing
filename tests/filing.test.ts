@@ -74,7 +74,7 @@ export async function moveFixture() {
   const occupied = new Set<string>();
   const host: MoveHost = {
     source: async requested => requested === path ? { noteId: 10, path, revision, contentHash: await contentHash(body) } : null,
-    currentPath: id => id === 10 ? path : null, exists: requested => requested === path || occupied.has(requested), eligible: requested => inInbox(requested, 'Inbox', true), referencesSafe: () => true,
+    currentPath: id => id === 10 ? path : null, exists: requested => requested === path || occupied.has(requested), eligible: requested => inInbox(requested, 'Inbox', true), referencesSafe: () => true, attachments: () => [], moveAttachment: vi.fn(async () => undefined),
     rename: vi.fn(async (from, to) => { if (from !== path || occupied.has(to)) throw Error('conflict'); path = to; revision++; }), folders: () => catalog.snapshot(), settingsRevision: () => configuration,
   };
   return { memory, store, host, catalog, service: new ConfirmedMoveService(host, store.journal), occupied, path: () => path, body: () => body, edit: (text: string) => { body = text; revision++; }, configure: () => { configuration++; } };
@@ -120,6 +120,25 @@ describe('restorable suggestions', () => {
     queue.invalidate(item => ({ ...item, foldersRevision: 2 })); await vi.advanceTimersByTimeAsync(1000);
     expect(queue.entries()[0]?.proposal?.foldersRevision).toBe(2); expect(propose).toHaveBeenCalledTimes(1);
     queue.invalidate(() => null); await vi.advanceTimersByTimeAsync(99); expect(propose).toHaveBeenCalledTimes(1); await vi.advanceTimersByTimeAsync(1); expect(propose).toHaveBeenCalledTimes(2); queue.dispose();
+  });
+  it('re-analyzes kept suggestions after a new folder, keeping each one until a new answer arrives', async () => {
+    vi.useFakeTimers(); let automatic = true; const answer = deferred<FilingProposal>();
+    const propose = vi.fn().mockResolvedValueOnce(proposal()).mockRejectedValueOnce(new OrganizerError('budget', 'error.budget')).mockReturnValueOnce(answer.promise);
+    const queue = new StableInboxQueue({ eligible: () => true, automaticEnabled: () => automatic, isEditing: () => false, propose, persist: async () => undefined, stableMs: 100 });
+    queue.analyze(note.source.path); await vi.advanceTimersByTimeAsync(0);
+    const keep = (item: FilingProposal) => ({ ...item, foldersRevision: 2 });
+    // A failed refresh (here: no budget left) keeps the current suggestion.
+    queue.invalidate(keep, { reanalyze: true }); await vi.advanceTimersByTimeAsync(100);
+    expect(propose).toHaveBeenCalledTimes(2); expect(queue.entries()[0]).toMatchObject({ status: 'ready', proposal: { selected: 'f1' }, message: null });
+    // The new folder is renamed while its refresh runs: the refresh is scheduled again.
+    queue.invalidate(keep, { reanalyze: true }); await vi.advanceTimersByTimeAsync(100); expect(propose).toHaveBeenCalledTimes(3);
+    expect(queue.entries()[0]?.status).toBe('ready');
+    queue.invalidate(keep); answer.resolve({ ...proposal(), selected: 'f2' }); await vi.advanceTimersByTimeAsync(0);
+    expect(queue.entries()[0]?.proposal?.selected).toBe('f1');
+    propose.mockResolvedValueOnce({ ...proposal(), selected: 'f2' }); await vi.advanceTimersByTimeAsync(100);
+    expect(propose).toHaveBeenCalledTimes(4); expect(queue.entries()[0]).toMatchObject({ status: 'ready', proposal: { selected: 'f2' } });
+    // Without automatic analysis a new folder never sends a request.
+    automatic = false; queue.invalidate(keep, { reanalyze: true }); await vi.advanceTimersByTimeAsync(1000); expect(propose).toHaveBeenCalledTimes(4); queue.dispose();
   });
   it('restores offline but cannot overwrite a concurrent edit or removal', async () => {
     const restored = deferred<FilingProposal>(); const propose = vi.fn(async () => proposal());

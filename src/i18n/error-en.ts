@@ -28,6 +28,7 @@ export const errorEn = {
   "error.moveJournal": "The move record could not be saved. The note has not been moved.",
   "error.undoJournal": "The undo record could not be saved. The note has not been moved.",
   "move.previousCompleted": "Move completed in a previous session.",
+  "move.attachmentsKept": "Some attachments could not move and stayed where they were; their links still work.",
   "move.completedVerified": "The completed move was verified at the destination.",
   "move.notCompleted": "The note is still at its original location. This move did not complete.",
   "move.changedReview": "The note's location or content changed. Review the move record.",

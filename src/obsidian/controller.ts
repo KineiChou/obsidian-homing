@@ -17,6 +17,7 @@ import { LocalMentionMatcher, sentenceRange } from '../linking/mention-matcher';
 import { MemoryLinkGraph } from '../linking/link-graph';
 import { searchTargets } from '../linking/target-search';
 import { normalize } from '../linking/terms';
+import type { LinkAtCursor } from '../linking/link-syntax';
 import { JevLinkRecommender } from '../linking/recommender';
 import { ConfirmedLinkService } from '../linking/link-service';
 import type { LinkMention, OrganizerController, ReviewState } from '../ui/types';
@@ -108,7 +109,6 @@ export class ObsidianOrganizer implements OrganizerController {
     } }, { get: () => this.plugin.app.secretStorage.getSecret(this.settings().secretName) }, () => this.settings());
     this.scheduler = new SharedDecisionScheduler(client, this.store.usage, () => this.settings().dailyRequestLimit);
     const classifier = new MixedDepthClassifier(this.scheduler, () => ({ longNoteStrategy: this.settings().longNoteStrategy, ...(this.settings().folderProfilesEnabled ? { profiles: this.profiles } : {}) }));
-    this.refreshFolders();
     this.queue = new StableInboxQueue({
       eligible: path => this.vault.eligible(path), automaticEnabled: () => this.enabled() && this.settings().autoFiling,
       encodeProposal: proposal => this.encodeProposal(proposal), restoreProposal: (path, proposal) => this.restoreProposal(path, proposal),
@@ -121,7 +121,7 @@ export class ObsidianOrganizer implements OrganizerController {
         return classifier.propose(prepared.note, folders, this.context(), { key: 'filing:' + path, priority: automatic ? 'filing' : 'manual', automatic, isCurrent: () => !this.disposed && this.requestRevision === requestRevision && isCurrent() && this.filingRevision === settings && this.vault.revision(path) === note.source.revision && this.catalog.snapshot().revision === folders.revision && this.vault.eligible(path) });
       },
     });
-    this.moves = new ConfirmedMoveService({ source: path => this.vault.source(path), currentPath: id => this.vault.currentPath(id), exists: path => Boolean(this.plugin.app.vault.getAbstractFileByPath(path)), eligible: path => this.vault.eligible(path), referencesSafe: (path, destination) => this.vault.referencesSafe(path, destination), rename: (from, to) => this.vault.rename(from, to), folders: () => this.catalog.snapshot(), settingsRevision: () => this.filingRevision }, this.store.journal);
+    this.moves = new ConfirmedMoveService({ source: path => this.vault.source(path), currentPath: id => this.vault.currentPath(id), exists: path => Boolean(this.plugin.app.vault.getAbstractFileByPath(path)), eligible: path => this.vault.eligible(path), referencesSafe: (path, destination) => this.vault.referencesSafe(path, destination), rename: (from, to) => this.vault.rename(from, to), attachments: (path, destination) => this.vault.attachmentMoves(path, destination), moveAttachment: (from, to) => this.vault.moveAttachment(from, to), folders: () => this.catalog.snapshot(), settingsRevision: () => this.filingRevision }, this.store.journal);
     this.recommender = new JevLinkRecommender(this.scheduler);
     const app = this.plugin.app;
     this.linker = new ConfirmedLinkService(this.index, {
@@ -135,6 +135,22 @@ export class ObsidianOrganizer implements OrganizerController {
         return app.metadataCache.getFirstLinkpathDest(parseLinktext(path).path, source)?.path === target.path;
       },
     });
+    // On app start plugins load before the vault's file tree; existing files arrive as create events
+    // until the layout is ready. Read folders, restore the queue and check moves only after that.
+    const loaded = this.plugin.app.workspace.layoutReady === false ? null : this.track(() => this.loadVault());
+    if (loaded) { await loaded; this.assertActive(); }
+    this.plugin.register(this.queue.subscribe(() => { this.filing = this.queue.entries(); this.events.emit(); }));
+    this.plugin.register(this.scheduler.subscribe(() => this.events.emit()));
+    this.plugin.registerEditorExtension(this.editors.extension);
+    this.plugin.app.workspace.onLayoutReady(() => {
+      if (this.disposed) return;
+      void (loaded ?? this.track(() => this.loadVault())).then(() => { if (!this.disposed) this.start(); }, error => { if (!this.disposed) this.report(error); });
+    });
+  }
+  /** Vault-dependent state: the folder catalog, the restored queue and move recovery. */
+  private async loadVault(): Promise<void> {
+    // The first read fills the catalog; it is not a folder change, so the queue is not invalidated.
+    this.catalog.refresh(this.vault.allFolders(), this.settings());
     await this.queue.restore(this.store.snapshot().filingQueue);
     this.assertActive();
     await this.queue.restore(this.plugin.app.vault.getMarkdownFiles().filter(file => this.vault.eligible(file.path)).map(file => ({ path: file.path, status: 'pending' as const })));
@@ -142,14 +158,11 @@ export class ObsidianOrganizer implements OrganizerController {
     this.filing = this.queue.entries();
     await this.moves.recover();
     this.assertActive();
-    this.plugin.register(this.queue.subscribe(() => { this.filing = this.queue.entries(); this.events.emit(); }));
-    this.plugin.register(this.scheduler.subscribe(() => this.events.emit()));
-    this.plugin.registerEditorExtension(this.editors.extension);
-    this.plugin.app.workspace.onLayoutReady(() => { if (!this.disposed) this.start(); });
+    this.events.emit();
   }
   private start(): void {
     const { vault, metadataCache, workspace } = this.plugin.app;
-    this.plugin.registerEvent(vault.on('create', file => { if (file instanceof TFolder) this.refreshFolders(); else if (file instanceof TFile) { this.metadata(file); if (this.vault.eligible(file.path)) this.queue.touch(file.path, true); } }));
+    this.plugin.registerEvent(vault.on('create', file => { if (file instanceof TFolder) this.refreshFolders(true); else if (file instanceof TFile) { this.metadata(file); if (this.vault.eligible(file.path)) this.queue.touch(file.path, true); } }));
     this.plugin.registerEvent(vault.on('modify', file => { if (file instanceof TFile) { this.vault.touch(file); this.metadata(file); this.invalidateLinks(); if (this.vault.eligible(file.path)) this.queue.touch(file.path, true); } }));
     this.plugin.registerEvent(metadataCache.on('changed', file => { this.metadata(file); this.invalidateLinks(); }));
     this.plugin.registerEvent(vault.on('rename', (file, oldPath) => {
@@ -206,10 +219,13 @@ export class ObsidianOrganizer implements OrganizerController {
     }
     if (!this.disposed && generation === this.generation) { this.ready = true; this.events.emit(); }
   }
-  private refreshFolders(): void {
-    const revision = this.catalog.snapshot().revision;
+  /** With `created`, a folder that adds a destination also re-analyzes kept suggestions, since it may fit them better. */
+  private refreshFolders(created = false): void {
+    const before = this.catalog.snapshot();
     this.catalog.refresh(this.vault.allFolders(), this.settings());
-    if (this.catalog.snapshot().revision !== revision) this.queue?.invalidate(proposal => this.preserveProposal(proposal));
+    const after = this.catalog.snapshot(), known = new Set(before.targets.map(target => target.path));
+    const reanalyze = created && after.targets.some(target => !known.has(target.path));
+    if (after.revision !== before.revision) this.queue?.invalidate(proposal => this.preserveProposal(proposal), { reanalyze });
     this.events.emit();
   }
   private preserveProposal(proposal: FilingProposal): FilingProposal | null {
@@ -301,7 +317,7 @@ export class ObsidianOrganizer implements OrganizerController {
       const existing = this.plugin.app.vault.getAbstractFileByPath(validated);
       if (existing && !(existing instanceof TFolder)) throw new OrganizerError('conflict', 'host.pathOccupied');
       if (!existing) await this.plugin.app.vault.createFolder(validated);
-      this.refreshFolders();
+      this.refreshFolders(true);
       const target = this.catalog.snapshot().targets.find(target => target.path === validated);
       if (!target) throw new OrganizerError('stale', 'host.folderChanged');
       return target;
@@ -517,20 +533,20 @@ export class ObsidianOrganizer implements OrganizerController {
     this.links = this.links.filter(item => !applied.has(item.id)); this.events.emit(); return result;
   }
   confirmLink(plan: LinkPlan): void { const result = this.confirmLinks([plan]); if (result.failures[0]) throw result.failures[0].error; }
+  /** Replaces a confirmed link with its visible text and keeps that spot from being suggested again this session. */
+  removeLink(sessionId: string, link: LinkAtCursor): void {
+    const session = this.editors.get(sessionId);
+    if (!session?.path || !this.vault.linkSource(session.path)) throw new OrganizerError('stale', 'error.linkStale');
+    session.replaceVerified(link.from, link.to, link.text, link.display);
+    session.suppressRange(link.from, link.from + link.display.length, link.display);
+    this.events.emit();
+  }
   dismissLink(proposal: LinkProposal): void { this.editors.get(proposal.input.anchor.editorSessionId)?.suppress(proposal.input.anchor, proposal.selected); this.links = this.links.filter(item => item.id !== proposal.id); this.events.emit(); }
   nextInboxNote(exclude?: string): string | null {
     const open = this.filing.filter(entry => entry.path !== exclude && !['done', 'moving', 'ignored', 'review'].includes(entry.status) && this.vault.file(entry.path) && this.vault.eligible(entry.path));
     return (open.find(entry => entry.status === 'ready') ?? open[0])?.path ?? null;
   }
-  attachmentCount(path: string): number {
-    const file = this.vault.file(path), cache = file && this.plugin.app.metadataCache.getFileCache(file);
-    const attachments = new Set<string>();
-    for (const embed of cache?.embeds ?? []) {
-      const target = this.plugin.app.metadataCache.getFirstLinkpathDest(parseLinktext(embed.link).path, path);
-      if (target && target.extension !== 'md') attachments.add(target.path);
-    }
-    return attachments.size;
-  }
+  attachmentCount(path: string): number { return this.vault.attachments(path).size; }
   openNote(path: string): void { void this.plugin.app.workspace.openLinkText(path, this.activePath ?? '', false); }
   target(id: number) { return this.index.get(id); }
   async testConnection(): Promise<void> { await this.settingsWrite; const requestRevision = this.requestRevision; this.scheduler.setPaused(false); await this.scheduler.evaluate({ modelId: this.settings().modelId, state: 'A short example about learning.', questions: [{ id: 'connection', instructions: 'Choose the matching subject.', options: [{ id: 'learning', description: 'Learning and reading' }, { id: 'none', description: 'Other' }] }] }, { key: 'connection', priority: 'manual', automatic: false, isCurrent: () => !this.disposed && this.requestRevision === requestRevision }); }

@@ -1,8 +1,9 @@
-import { setIcon } from 'obsidian';
+import { setIcon, setTooltip } from 'obsidian';
 import { StateEffect, type Extension, type Range } from '@codemirror/state';
 import { Decoration, ViewPlugin, WidgetType, type DecorationSet, type EditorView, type ViewUpdate } from '@codemirror/view';
 import type { LinkMention, OrganizerController } from './types';
 import type { LinkTarget } from '../linking/types';
+import { linkAt, type LinkAtCursor } from '../linking/link-syntax';
 import { button, node } from './dom';
 import { errorText, t } from '../i18n';
 
@@ -10,7 +11,13 @@ export interface LinkHintHost {
   sessionId(view: EditorView): string | undefined;
   chooseTarget(candidates: readonly LinkTarget[], choose: (noteId: number) => void): void;
 }
-export interface LinkHints { readonly extension: Extension; acceptAtCursor(checking?: boolean): boolean }
+/** What a cursor command acts on: an existing link first, else a suggested mention. */
+export type CursorTarget = { kind: 'link'; session: string; link: LinkAtCursor } | { kind: 'mention'; session: string; mention: LinkMention };
+export interface LinkHints {
+  readonly extension: Extension;
+  acceptAtCursor(checking?: boolean): boolean;
+  targetAtCursor(): CursorTarget | null;
+}
 
 /** After an edit, the mention under the caret stays undecorated for this long (docs/link-matching.md §7). */
 export const QUIET_MS = 1500;
@@ -18,6 +25,8 @@ const HOVER_MS = 300, CURSOR_MS = 700, LEAVE_MS = 250;
 const refresh = StateEffect.define<null>();
 const ATTRIBUTE = 'data-note-organizer-mentions';
 const breadcrumb = (path: string) => path.replace(/\.md$/, '').split('/').join(' › ');
+/** The folder a note sits in, as a breadcrumb; the note's own title is shown separately. */
+const folderOf = (path: string) => breadcrumb(path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');
 const idOf = (mention: { from: number; to: number }) => `${mention.from}:${mention.to}`;
 const settled = (mention: LinkMention) => mention.tier === 'confident' || mention.verified !== undefined;
 // Popout editors can send DOM nodes from another window's realm.
@@ -39,19 +48,21 @@ class MarkerWidget extends WidgetType {
 /** Local, network-free link hints; the model is asked only for uncertain mentions, on hover. */
 export function linkHints(controller: OrganizerController, host: LinkHintHost): LinkHints {
   const views = new Set<LinkHintView>();
-  const extension = ViewPlugin.define(view => { const hint: LinkHintView = new LinkHintView(view, controller, host, () => views.delete(hint)); views.add(hint); return hint; }, {
+  let lastFocused: LinkHintView | null = null;
+  const focused = (hint: LinkHintView) => { lastFocused = hint; };
+  const extension = ViewPlugin.define(view => { const hint: LinkHintView = new LinkHintView(view, controller, host, () => { views.delete(hint); if (lastFocused === hint) lastFocused = null; }, focused); views.add(hint); return hint; }, {
     decorations: value => value.decorations,
     eventHandlers: {
       mouseover(event) { this.hover(event); },
       mouseout(event) { this.leave(event); },
     },
   });
+  const current = () => [...views].find(item => item.view.hasFocus) ?? (lastFocused?.view.dom.isConnected ? lastFocused : undefined);
   return {
     extension,
-    acceptAtCursor: (checking = false) => {
-      const hint = [...views].find(item => item.view.hasFocus);
-      return hint ? hint.acceptAtCursor(checking) : false;
-    },
+    // The command palette takes focus from the editor, so fall back to the editor that had it last.
+    acceptAtCursor: (checking = false) => current()?.acceptAtCursor(checking) ?? false,
+    targetAtCursor: () => current()?.targetAtCursor() ?? null,
   };
 }
 
@@ -74,7 +85,7 @@ class LinkHintView {
   private scheduled = false;
   private builtKey = '';
   private alive = true;
-  constructor(readonly view: EditorView, private readonly controller: OrganizerController, private readonly host: LinkHintHost, private readonly release: () => void) {
+  constructor(readonly view: EditorView, private readonly controller: OrganizerController, private readonly host: LinkHintHost, private readonly release: () => void, private readonly focused: (hint: LinkHintView) => void) {
     this.decorations = this.build(); this.builtKey = this.key();
     this.unsubscribe = controller.subscribe(() => this.requestRefresh());
     view.scrollDOM.addEventListener('scroll', this.scrolled, { passive: true });
@@ -122,6 +133,7 @@ class LinkHintView {
       // Moving focus to a card action must preserve the button through mouseup.
       if (this.card && refreshed) this.renderCard();
     }
+    if (update.focusChanged && this.view.hasFocus) this.focused(this);
     if (update.focusChanged && !this.view.hasFocus) window.clearTimeout(this.cursorTimer);
     if (update.selectionSet && !update.docChanged) this.watchCursor();
   }
@@ -160,6 +172,14 @@ class LinkHintView {
     const head = this.view.state.selection.main.head;
     return this.mentions.find(mention => mention.from <= head && head <= mention.to);
   }
+  targetAtCursor(): CursorTarget | null {
+    const session = this.session;
+    if (!session) return null;
+    const head = this.view.state.selection.main.head, line = this.view.state.doc.lineAt(head), found = linkAt(line.text, head - line.from);
+    if (found) return { kind: 'link', session, link: { ...found, from: found.from + line.from, to: found.to + line.from } };
+    const mention = this.atCursor();
+    return mention ? { kind: 'mention', session, mention } : null;
+  }
   acceptAtCursor(checking: boolean): boolean {
     const mention = this.atCursor();
     if (!mention) return false;
@@ -185,7 +205,7 @@ class LinkHintView {
     if (!card) return;
     const width = Math.min(320, doc.documentElement.clientWidth - 16);
     card.style.left = Math.max(8, Math.min(rect.left, doc.documentElement.clientWidth - width - 8)) + 'px';
-    card.style.top = rect.bottom + 6 + 'px'; card.style.width = width + 'px';
+    card.style.top = rect.bottom + 6 + 'px'; card.style.maxWidth = width + 'px';
   }
   private verify(mention: LinkMention): void {
     const key = mention.verdictKey, session = this.session, previous = this.checks.get(key);
@@ -220,28 +240,40 @@ class LinkHintView {
     const verdict = check?.state === 'done' && check.selected !== null ? check.selected : undefined;
     const chosen = this.overrides.get(id) ?? mention.verified ?? verdict ?? (mention.tier === 'confident' ? mention.candidates[0]?.target.noteId : undefined);
     const target = mention.candidates.find(candidate => candidate.target.noteId === chosen)?.target;
-    const title = node(row, 'div', undefined, 'note-organizer-hint-title'); setIcon(node(title, 'span'), 'link'); node(title, 'span', target?.title ?? mention.text);
-    if (target) {
-      node(row, 'div', breadcrumb(target.path) + (target.description ? ' · ' + target.description : ''), 'note-organizer-muted');
-      const actions = node(row, 'div', undefined, 'note-organizer-actions');
-      button(actions, t('hint.link'), () => this.link(mention, target.noteId), true);
-      if (mention.candidates.length > 1) button(actions, t('hint.other'), () => this.host.chooseTarget(mention.candidates.map(candidate => candidate.target), noteId => { if (this.alive && this.cardMentions.some(item => item.verdictKey === id)) { this.overrides.set(id, noteId); this.renderCard(); } }));
-      button(actions, t('hint.ignore'), () => this.ignore(mention));
-    } else {
+    // A card for several mentions (line marker) names each one; otherwise the underlined word is right above.
+    if (this.cardMentions.length > 1) node(row, 'div', `“${mention.text}”`, 'note-organizer-hint-label');
+    const head = node(row, 'div', undefined, 'note-organizer-hint-head');
+    if (target) node(head, 'div', target.title, 'note-organizer-hint-title note-organizer-hint-target');
+    else {
       const status = check?.state === 'pending' ? t('hint.checking') : check?.state === 'done' ? t('hint.noLink') : check?.state === 'failed' ? check.message : t('hint.choose');
-      const message = node(row, 'div', status, 'note-organizer-muted'); message.setAttribute('role', 'status');
-      const choices = node(row, 'div', undefined, 'note-organizer-hint-choices');
-      for (const candidate of mention.candidates.slice(0, 4)) {
-        const choice = button(choices, breadcrumb(candidate.target.path), () => { this.overrides.set(id, candidate.target.noteId); this.renderCard(); });
-        choice.className = 'note-organizer-chip';
-      }
-      const actions = node(row, 'div', undefined, 'note-organizer-actions');
-      button(actions, t('hint.ignore'), () => this.ignore(mention));
+      const message = node(head, 'div', status, 'note-organizer-hint-status' + (check?.state === 'pending' ? ' is-pending' : '')); message.setAttribute('role', 'status');
     }
-    const never = button(row, t('hint.never', { term: mention.text }), () => { void this.controller.ignoreLinkTerm(mention.text).catch(() => undefined); this.closeCard(); });
-    never.className = 'note-organizer-link-button note-organizer-hint-never';
+    const tools = node(head, 'div', undefined, 'note-organizer-hint-tools');
+    if (target) {
+      button(tools, t('hint.link'), () => this.link(mention, target.noteId), true).classList.add('note-organizer-hint-accept');
+      if (mention.candidates.length > 1) this.iconButton(tools, 'arrow-left-right', t('hint.other'), () => this.host.chooseTarget(mention.candidates.map(candidate => candidate.target), noteId => { if (this.alive && this.cardMentions.some(item => item.verdictKey === id)) { this.overrides.set(id, noteId); this.renderCard(); } }));
+    }
+    this.iconButton(tools, 'x', t('hint.ignore'), () => this.ignore(mention));
+    this.iconButton(tools, 'eye-off', t('hint.never', { term: mention.text }), () => { void this.controller.ignoreLinkTerm(mention.text).catch(() => undefined); this.closeCard(); });
+    const meta = target && [folderOf(target.path), target.description].filter(Boolean).join(' · ');
+    if (meta) node(row, 'div', meta, 'note-organizer-hint-meta note-organizer-hint-about');
+    if (!target) {
+      // Picking a candidate is the confirmation: it links at once.
+      const options = node(row, 'div', undefined, 'note-organizer-hint-options');
+      for (const candidate of mention.candidates.slice(0, 4)) {
+        const option = button(options, '', () => this.link(mention, candidate.target.noteId)); option.className = 'note-organizer-hint-option';
+        node(option, 'span', candidate.target.title, 'note-organizer-hint-title');
+        const folder = folderOf(candidate.target.path); if (folder) node(option, 'span', folder, 'note-organizer-hint-meta');
+        option.setAttribute('aria-label', t('linkMenu.link', { path: breadcrumb(candidate.target.path) }));
+      }
+    }
     const problem = this.feedback.get(id);
     if (problem) { const status = node(row, 'p', problem, 'note-organizer-feedback'); status.setAttribute('role', 'status'); }
+  }
+  private iconButton(parent: HTMLElement, icon: string, label: string, action: () => void): HTMLButtonElement {
+    const control = button(parent, '', action); control.className = 'note-organizer-icon-button';
+    setIcon(control, icon); control.setAttribute('aria-label', label); setTooltip(control, label, { placement: 'top' });
+    return control;
   }
   private link(mention: LinkMention, targetId: number): void {
     const id = mention.verdictKey, session = this.session;

@@ -5,11 +5,13 @@ import { translateMessage } from '../i18n';
 const categories = ['links', 'embeds', 'frontmatterLinks'] as const;
 interface Reference { readonly source: TFile; readonly category: typeof categories[number]; readonly index: number; readonly target: TFile }
 export interface ReferenceInspection { readonly issue: string | null; readonly references: readonly Reference[] }
-function updatesLinks(app: App): boolean {
+/** Reads a vault option from Obsidian's (unpublished) config accessor; undefined when unavailable. */
+export function vaultConfig(app: App, key: string): unknown {
   const vault: unknown = app.vault;
-  try { return typeof vault === 'object' && vault !== null && 'getConfig' in vault && typeof vault.getConfig === 'function' && (vault as { getConfig(key: string): unknown }).getConfig('alwaysUpdateLinks') === true; }
-  catch { return false; }
+  try { return typeof vault === 'object' && vault !== null && 'getConfig' in vault && typeof vault.getConfig === 'function' ? (vault as { getConfig(key: string): unknown }).getConfig(key) : undefined; }
+  catch { return undefined; }
 }
+export function updatesLinks(app: App): boolean { return vaultConfig(app, 'alwaysUpdateLinks') === true; }
 export function inspectReferences(app: App, source: TFile, destination: string): ReferenceInspection {
   const references: Reference[] = [], automatic = updatesLinks(app);
   const uniqueBasename = !app.vault.getMarkdownFiles().some(file => file !== source && file.basename === source.basename);

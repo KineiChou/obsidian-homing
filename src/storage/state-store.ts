@@ -39,7 +39,9 @@ function parseQueue(value: unknown): PersistedFilingEntry[] {
 function parseRecord(value: unknown): MoveRecord {
   const v = object(value);
   if (typeof v.id !== 'string' || !v.id || !integer(v.noteId) || !path(v.from) || !path(v.to) || typeof v.contentHash !== 'string' || !v.contentHash || !integer(v.createdAt) || !['intent', 'done', 'undone', 'review', 'archived'].includes(String(v.status)) || (v.message !== undefined && typeof v.message !== 'string')) throw storageError();
-  return { id: v.id, noteId: v.noteId, from: v.from, to: v.to, contentHash: v.contentHash, createdAt: v.createdAt, status: v.status as MoveRecord['status'], ...(v.message === undefined ? {} : { message: v.message }) };
+  const attachments = v.attachments === undefined ? [] : Array.isArray(v.attachments) ? v.attachments.map((item: unknown) => { const a = object(item); if (!path(a.from) || !path(a.to)) throw storageError(); return { from: a.from, to: a.to }; }) : null;
+  if (!attachments) throw storageError();
+  return { id: v.id, noteId: v.noteId, from: v.from, to: v.to, contentHash: v.contentHash, createdAt: v.createdAt, status: v.status as MoveRecord['status'], ...(v.message === undefined ? {} : { message: v.message }), ...(attachments.length ? { attachments } : {}) };
 }
 function parseUsage(value: unknown): DailyUsage {
   const v = object(value);

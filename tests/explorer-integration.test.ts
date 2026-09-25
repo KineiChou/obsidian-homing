@@ -49,7 +49,7 @@ function fixture(options: { navigatorVersion?: string; markers?: boolean; deferL
   const controller = {
     subscribe: (listener: () => void) => changes.subscribe(listener), settings: () => settings, state: () => ({ filing: entries }),
     folders: () => [{ id: 'reading', path: 'Resources/Reading', directPurpose: '', effectiveRules: [] }, { id: 'projects', path: 'Projects', directPurpose: '', effectiveRules: [] }],
-    prepareMove: vi.fn(async (path: string, folderId: string): Promise<MovePlan> => ({ id: 'plan', source: { noteId: 1, path, revision: 1, contentHash: 'h' }, destination: 'Resources/Reading/Ready.md', folderId, foldersRevision: 1, settingsRevision: 1 })),
+    prepareMove: vi.fn(async (path: string, folderId: string): Promise<MovePlan> => ({ id: 'plan', source: { noteId: 1, path, revision: 1, contentHash: 'h' }, destination: 'Resources/Reading/Ready.md', folderId, foldersRevision: 1, settingsRevision: 1, attachments: [] })),
     confirmMove: vi.fn(async () => undefined), undoMove: vi.fn(async () => undefined), analyzeNote: vi.fn(), ignoreNote: vi.fn(),
   };
   const actions = { eligible: (path: string) => path.startsWith('Inbox/'), organize: vi.fn(), analyze: vi.fn(), chooseDestination: vi.fn<(choose: (id: string) => void) => void>() };

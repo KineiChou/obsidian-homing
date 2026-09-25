@@ -30,7 +30,7 @@
 
 `PersistedState.schemaVersion` 为 2，兼容读取 1；新增设置使用默认值，未知 schema 或损坏核心配置禁止写回。单条损坏建议降级为等待，加载过程不覆盖原文件。队列持久化只保存路径、忽略状态和可选最小建议：完整原文 SHA-256、目标路径或 null、前三个目标路径与分值、模型／提示版本、分类设置指纹、创建时间及摘录长度；不保存正文、会话 ID 或目录 ID。
 
-`InboxQueueDependencies.encodeProposal/restoreProposal` 由 controller 注入。启动先初始化目录，再创建队列并恢复建议，避免目录初始化触发空队列写回。异步 `restore()` 校验原文、设置指纹、模型和有效目标，并绑定当前会话身份；恢复期间的编辑、移除或重新分析使旧恢复结果失效。恢复和历史库存展示不联网，也不自动排队。`invalidate(preserve)` 保留仍有效的建议；失效建议和已有分析任务在自动归档允许时重新稳定等待，历史 waiting 库存不因目录变化或启用开关而上传。队列一次只向调度器提交一篇笔记，预算耗尽回到 waiting。
+`InboxQueueDependencies.encodeProposal/restoreProposal` 由 controller 注入。启动先初始化目录，再创建队列并恢复建议，避免目录初始化触发空队列写回。异步 `restore()` 校验原文、设置指纹、模型和有效目标，并绑定当前会话身份；恢复期间的编辑、移除或重新分析使旧恢复结果失效。恢复和历史库存展示不联网，也不自动排队。`invalidate(preserve, { reanalyze })` 保留仍有效的建议；`reanalyze` 仅由新增目标的建目录事件传入，在自动归档允许时为保留的建议排一次后台 `refresh` 分析（不切换为 analyzing，失败不覆盖原建议，被后续失效打断时重新排队）；失效建议和已有分析任务在自动归档允许时重新稳定等待，历史 waiting 库存不因目录变化或启用开关而上传。队列一次只向调度器提交一篇笔记，预算耗尽回到 waiting。
 
 移动意图必须先持久化，再写文件，最后保存结果。上一会话的 done 转为不可撤销的 archived；intent 通过两端路径和内容指纹确认已完成或未执行时归档，无法确定才进入 review。`acknowledge(recordId)` 将人工核对的 review 归档。完成历史最多保留 100 条，未解决 intent/review 不参与裁剪；撤销仅授权给当前服务实例成功完成的记录，不复用持久化 noteId。
 
@@ -50,7 +50,7 @@ Node 22.12+；使用 npm 11 验证 `npx --yes npm@11 ci --ignore-scripts`，再�
 
 ## UI 入口与端口
 
-主要交互位于编辑器内，不使用侧栏或整理标签页；旧 `note-organizer-inbox`／`note-organizer-review` 视图注册为 `RetiredReviewView`，恢复时自动关闭。`filingPills(controller, host)` 通过 `PillSurface` 接入 `MarkdownView.contentEl` 并绝对定位，因此源码、实时预览和阅读模式共享同一胶囊，面板打开后才调用 `prepareMove`；同一路径共享手选目标，目标绑定建议 ID，文件对象变化才清除撤销状态。`linkHints(controller, host)` 用 Decoration 显示下划线或行尾标记，编辑后 `QUIET_MS` 内隐藏，控制器事件在微任务中以 StateEffect 刷新，悬停卡片挂在 `document.body`。`InboxModal` 在批量确认时固定目标与 `SourceVersion`，逐篇准备后与确认快照比较，再执行计划；无建议笔记的手选目标先准备以捕获源版本，处理期间禁用改选并忽略旧选择器回调。`AnalysisModal` 在发送前确认待分析路径，`LinkSuggestionsModal` 固定源会话并批量确认链接。`registerExplorerIntegration` 注册原生 `file-menu`／`files-menu` 与 Notebook Navigator 1.2+ 菜单 API，并在检测到原生文件栏内部条目表时写入 `data-note-organizer` 标记。控制器为界面提供 `scanLinks()`、`verifyLink()`、`linkProposalFor()`、`searchLinkTargets()` 等链接接口（见 [双链匹配设计](link-matching.md) §9）以及 `nextInboxNote()` 与 `attachmentCount()`；`LinkQuerySuggest` 注册为 `EditorSuggest` 处理 `[[?`；`EditorSessions.sessionFor(view)` 让补链提示找到所属编辑会话。
+主要交互位于编辑器内，不使用侧栏或整理标签页；旧 `note-organizer-inbox`／`note-organizer-review` 视图注册为 `RetiredReviewView`，恢复时自动关闭。`filingPills(controller, host)` 通过 `PillSurface` 接入 `MarkdownView.contentEl` 并绝对定位，因此源码、实时预览和阅读模式共享同一胶囊，面板打开后才调用 `prepareMove`；同一路径共享手选目标，目标绑定建议 ID，文件对象变化才清除撤销状态。`linkHints(controller, host)` 用 Decoration 显示下划线或行尾标记，编辑后 `QUIET_MS` 内隐藏，控制器事件在微任务中以 StateEffect 刷新，悬停卡片挂在 `document.body`。`InboxModal` 在批量确认时固定目标与 `SourceVersion`，逐篇准备后与确认快照比较，再执行计划；无建议笔记的手选目标先准备以捕获源版本，处理期间禁用改选并忽略旧选择器回调。`AnalysisModal` 在发送前确认待分析路径，`LinkSuggestionsModal` 固定源会话并批量确认链接。`registerExplorerIntegration` 注册原生 `file-menu`／`files-menu` 与 Notebook Navigator 1.2+ 菜单 API，并在检测到原生文件栏内部条目表时写入 `data-note-organizer` 标记。控制器为界面提供 `scanLinks()`、`verifyLink()`、`linkProposalFor()`、`searchLinkTargets()` 等链接接口（见 [双链匹配设计](link-matching.md) §9）以及 `nextInboxNote()` 与 `attachmentCount()`（附件移动见 `MoveHost.attachments/moveAttachment` 与 [目录分类](folder-classification.md)）；`LinkQuerySuggest` 注册为 `EditorSuggest` 处理 `[[?`；`EditorSessions.sessionFor(view)` 让补链提示找到所属编辑会话。
 
 控制器返回的 `LinkMention.verdictKey` 绑定源路径、句子、句内位置、候选身份与版本及模型配置。悬停请求和确认前都重新校验当前提及；UI 按该键保存判断状态，正文变化关闭旧卡片，失败可在重新打开后重试。`verifyLinkQuery` 要求调用方提供实时 `isCurrent()`；查询关闭、正文或设置变化会取消待发请求并拒绝晚到响应。`linkMarkdown` 接收完整 `LinkTarget` 并核对身份、版本与路径，防止旧路径被新文件占用后插错目标。所有查询、发送和插入均执行源笔记范围限制。
 
