@@ -45,7 +45,8 @@ function fixture(style: LinkHintStyle = 'underline', parent: HTMLElement = docum
   return { changeContext: () => { mentions = mentions.map(item => ({ ...item, verdictKey: item.verdictKey + ':changed' })); changes.emit(); }, invalidate: () => { mentions = []; changes.emit(); }, pending, view, hints, controller, host, hint,
     marks: () => [...view.contentDOM.querySelectorAll('.note-organizer-link-hint')].map(item => [item.textContent, item.classList.contains('is-confident') ? 'confident' : 'uncertain']),
     card: () => parent.ownerDocument.body.querySelector<HTMLElement>('.note-organizer-hint-card'),
-    button: (text: string) => [...parent.ownerDocument.body.querySelector('.note-organizer-hint-card')!.querySelectorAll('button')].find(item => item.textContent === text)! };
+    target: () => parent.ownerDocument.body.querySelector('.note-organizer-hint-target')?.textContent ?? null,
+    button: (text: string) => [...parent.ownerDocument.body.querySelector('.note-organizer-hint-card')!.querySelectorAll('button')].find(item => item.textContent === text || item.getAttribute('aria-label') === text)! };
 }
 const flush = async () => { for (let i = 0; i < 4; i++) await Promise.resolve(); };
 const hover = async (element: Element) => { element.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); await vi.advanceTimersByTimeAsync(301); };
@@ -70,7 +71,7 @@ it('offers a line marker or nothing according to the display setting', () => {
 
 it('links a clear mention without asking the model, after an optional target change', async () => {
   const f = fixture(); await hover(f.hint('Transformer'));
-  expect(f.card()?.textContent).toContain('Resources › Transformer'); expect(f.controller.verifyLink).not.toHaveBeenCalled();
+  expect(f.target()).toBe('Transformer'); expect(f.controller.verifyLink).not.toHaveBeenCalled();
   f.button('Other note…').click(); f.host.chooseTarget.mock.calls[0]![1](11);
   expect(f.card()?.textContent).toContain('Transformer (other)'); expect(f.controller.confirmLinks).not.toHaveBeenCalled();
   f.button('Link').click();
@@ -82,7 +83,7 @@ it('asks the model once on hover for an ambiguous mention and shows its choice',
   const f = fixture(); await hover(f.hint('Attention'));
   expect(f.controller.verifyLink).toHaveBeenCalledOnce(); expect(f.card()?.textContent).toContain('Checking which note');
   f.pending.get('Attention')!.resolve(2); await flush();
-  expect(f.card()?.textContent).toContain('Resources › Attention'); expect(f.marks()).toEqual([['Transformer', 'confident'], ['Attention', 'confident']]);
+  expect(f.target()).toBe('Attention'); expect(f.marks()).toEqual([['Transformer', 'confident'], ['Attention', 'confident']]);
   f.button('Link').click(); expect(f.controller.prepareLink).toHaveBeenCalledWith(expect.objectContaining({ id: 'Attention' }), 2);
   expect(f.controller.verifyLink).toHaveBeenCalledOnce();
 });
@@ -92,7 +93,8 @@ it('keeps the answer visible when the model says no link, and still allows a man
   f.pending.get('Attention')!.resolve(null); await flush();
   expect(f.marks().map(mark => mark[0])).toEqual(['Transformer']);
   expect(f.card()?.textContent).toContain('may not need a link');
-  f.button('Resources › Attention (other)').click(); f.button('Link').click();
+  // Picking a candidate links it at once.
+  f.button('Link to Resources › Attention (other)').click();
   expect(f.controller.prepareLink).toHaveBeenCalledWith(expect.objectContaining({ id: 'Attention' }), 12);
 });
 
@@ -173,7 +175,7 @@ it('retries a failed check when the user reopens the card', async () => {
   await hover(f.hint('Attention'));
   expect(f.controller.verifyLink).toHaveBeenCalledTimes(2);
   f.pending.get('Attention')!.resolve(2); await flush();
-  expect(f.card()?.textContent).toContain('Resources › Attention');
+  expect(f.target()).toBe('Attention');
 });
 
 it('ignores an old pending verdict after a new sentence reuses the mention offsets', async () => {
@@ -184,7 +186,7 @@ it('ignores an old pending verdict after a new sentence reuses the mention offse
   previous.resolve(2); await flush();
   expect(f.card()?.textContent).toContain('Checking which note');
   f.pending.get('Attention')!.resolve(12); await flush();
-  expect(f.card()?.textContent).toContain('Resources › Attention (other)');
+  expect(f.target()).toBe('Attention (other)');
 });
 
 it('commands find an existing link or a mention at the cursor in the editor that last had focus', () => {
