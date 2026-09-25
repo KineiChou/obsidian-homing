@@ -64,6 +64,7 @@ class FilingPill {
   private guardUntil = 0;
   private guardTimer: ReturnType<typeof setTimeout> | undefined;
   private previousFile: unknown;
+  private fileContext = {};
   private alive = true;
   constructor(private readonly surface: PillSurface, private readonly controller: OrganizerController, private readonly hostActions: PillHost, private readonly shared: { destinations: Map<string, ManualDestination>; changed(): void }) {
     this.host = surface.parent.ownerDocument.createElement('div'); this.host.className = 'note-organizer note-organizer-pill-host';
@@ -103,7 +104,13 @@ class FilingPill {
     if (!this.alive) return;
     // Filing renames the same file object; only a different file resets the done state.
     const file = this.file();
-    if (file !== this.previousFile) { this.previousFile = file; this.lastMove = null; this.plan = null; if (this.opened) { this.opened = false; this.doc.removeEventListener('mousedown', this.outside, true); } this.signature = ''; }
+    if (file !== this.previousFile) {
+      this.previousFile = file; this.fileContext = {}; this.generation++;
+      this.lastMove = null; this.plan = null; this.busy = false; this.feedback = ''; this.focusOnReady = false;
+      this.guardUntil = 0; clearTimeout(this.guardTimer);
+      if (this.opened) { this.opened = false; this.doc.removeEventListener('mousedown', this.outside, true); }
+      this.signature = '';
+    }
     const model = this.model(), entry = model.entry, target = this.target(entry);
     const folders = this.controller.folders(), folder = folders.find(item => item.id === target);
     const width = this.surface.parent.clientWidth, compact = width > 0 && width < 520;
@@ -179,14 +186,19 @@ class FilingPill {
   private async accept(): Promise<void> { if (this.plan) await this.confirm(this.plan); }
   private async confirm(plan: MovePlan): Promise<void> {
     if (this.busy || Date.now() < this.guardUntil) return;
+    if (this.path() !== plan.source.path) { this.render(); return; }
+    const file = this.file(), context = this.fileContext;
+    const current = () => this.alive && this.file() === file && this.fileContext === context;
     this.busy = true; this.feedback = ''; this.render();
     try {
       await this.controller.confirmMove(plan);
-      this.lastMove = { id: plan.id, to: plan.destination }; this.shared.destinations.delete(plan.source.path);
+      this.shared.destinations.delete(plan.source.path);
+      if (!current()) return;
+      this.lastMove = { id: plan.id, to: plan.destination };
       this.opened = false; this.doc.removeEventListener('mousedown', this.outside, true);
       this.guardUntil = Date.now() + GUARD_MS; clearTimeout(this.guardTimer);
       this.guardTimer = setTimeout(() => { this.signature = ''; this.render(); }, GUARD_MS);
-    } catch (error) { this.feedback = errorText(error); }
+    } catch (error) { if (!current()) return; this.feedback = errorText(error); }
     this.busy = false; this.signature = ''; this.render();
   }
   private renderDone(record: { id: string; to: string }): void {
@@ -195,7 +207,9 @@ class FilingPill {
     const folder = record.to.slice(0, record.to.lastIndexOf('/'));
     node(group, 'span', t('organizer.filedAt', { path: breadcrumb(folder) }), 'note-organizer-pill-label');
     const guarded = Date.now() < this.guardUntil;
-    const undo = button(group, t('organizer.undo'), () => { undo.disabled = true; void this.controller.undoMove(record.id).then(() => { this.lastMove = null; this.signature = ''; this.render(); }).catch(error => { this.feedback = errorText(error); this.signature = ''; this.render(); }); });
+    const context = this.fileContext, file = this.file();
+    const current = () => this.alive && this.fileContext === context && this.file() === file;
+    const undo = button(group, t('organizer.undo'), () => { undo.disabled = true; void this.controller.undoMove(record.id).then(() => { if (current()) { this.lastMove = null; this.signature = ''; this.render(); } }).catch(error => { if (current()) { this.feedback = errorText(error); this.signature = ''; this.render(); } }); });
     undo.className = 'note-organizer-link-button'; undo.dataset.action = 'undo'; undo.disabled = guarded;
     const open = this.controller.state().filing.filter(entry => OPEN_STATUSES.has(entry.status) && entry.path !== record.to);
     const next = this.controller.nextInboxNote(record.to);

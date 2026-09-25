@@ -78,6 +78,19 @@ it('clears the old key and applies endpoint/model together when switching provid
   expect(requestUrl).not.toHaveBeenCalled();
 });
 
+it('offers OpenRouter with its endpoint and model, clears the old key and saves a custom model', async () => {
+  const f = await settingsFixture(); requestUrl.mockClear();
+  const select = f.container.querySelector('select')!;
+  expect([...select.options].find(option => option.value === 'openrouter')?.textContent).toBe('OpenRouter');
+  select.value = 'openrouter'; select.dispatchEvent(new Event('change'));
+  await vi.waitFor(() => expect(f.controller.settings()).toMatchObject({ provider: 'openrouter', endpoint: 'https://openrouter.ai/api/v1', modelId: 'openai/gpt-4.1-mini', secretName: '' }));
+  await vi.waitFor(() => expect(f.container.textContent).toContain(t('settings.openrouterModelHelp')));
+  const model = [...f.container.querySelectorAll('input')].find(input => input.value === 'openai/gpt-4.1-mini')!;
+  model.value = 'vendor/custom-model'; model.dispatchEvent(new Event('change'));
+  await vi.waitFor(() => expect(f.plugin.data).toMatchObject({ settings: { provider: 'openrouter', modelId: 'vendor/custom-model', secretName: '' } }));
+  expect(requestUrl).not.toHaveBeenCalled();
+});
+
 it('waits for a pending connection setting before sending the connection test', async () => {
   const f = await settingsFixture();
   requestUrl.mockResolvedValue({ status: 200, headers: {}, json: { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ answers: { connection: { choice: 'learning', ranking: ['learning', 'none'] } } }) } }] } });

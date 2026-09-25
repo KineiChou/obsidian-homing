@@ -5,6 +5,7 @@ import type { FilingEntry, MovePlan, MoveRecord } from '../src/filing/types';
 import { setLocale } from '../src/i18n';
 import { filingPills } from '../src/ui/filing-pill';
 import type { OrganizerController } from '../src/ui/types';
+import { deferred } from './helpers';
 
 const cleanup: (() => void)[] = [];
 beforeEach(() => setLocale('en'));
@@ -118,4 +119,27 @@ it('displays failed undo feedback immediately', async () => {
   f.button('Undo').click(); await settled();
   expect(f.controller.undoMove).toHaveBeenCalledTimes(2);
   expect(f.button('Undo').disabled).toBe(false);
+});
+
+it('keeps a pending move and its late error attached to the note that started it', async () => {
+  const f = fixture(), pending = deferred<void>();
+  f.controller.confirmMove.mockReturnValue(pending.promise);
+  f.button('→ Reading').click(); await settled(); f.button('File note').click();
+  f.surfaces[0]!.show({ path: 'Inbox/Next.md' });
+  expect(f.pill().textContent).toBe('→ Reading');
+  f.button('→ Reading').click(); await settled();
+  pending.reject(new Error('Previous note could not move')); await settled();
+  expect(f.pill().textContent).not.toContain('Previous note');
+  expect(f.button('File note').disabled).toBe(false);
+});
+
+it('ignores late undo errors after switching to a different note', async () => {
+  vi.useFakeTimers(); const f = fixture(), pending = deferred<undefined>();
+  f.button('→ Reading').click(); await settled(); f.button('File note').click(); await settled();
+  await vi.advanceTimersByTimeAsync(401);
+  f.controller.undoMove.mockReturnValue(pending.promise); f.button('Undo').click();
+  f.surfaces[0]!.show({ path: 'Inbox/Next.md' }); f.button('→ Reading').click(); await settled();
+  pending.reject(new Error('Previous undo failed')); await settled();
+  expect(f.pill().textContent).not.toContain('Previous undo');
+  expect(f.button('File note').disabled).toBe(false);
 });

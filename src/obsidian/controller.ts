@@ -105,8 +105,8 @@ export class ObsidianOrganizer implements OrganizerController {
       eligible: path => this.vault.eligible(path), automaticEnabled: () => this.enabled() && this.settings().autoFiling,
       encodeProposal: proposal => this.encodeProposal(proposal), restoreProposal: (path, proposal) => this.restoreProposal(path, proposal),
       isEditing: path => this.editors.editing(path), persist: entries => this.store.updateQueue(entries),
-      propose: async (path, automatic, isCurrent) => {
-        const note = await this.vault.note(path, !automatic), folders = this.catalog.snapshot(), settings = this.filingRevision, requestRevision = this.requestRevision;
+      propose: async (path, automatic, isCurrent, contentSource) => {
+        const note = await this.vault.note(path, contentSource === 'editor'), folders = this.catalog.snapshot(), settings = this.filingRevision, requestRevision = this.requestRevision;
         const prepared = prepareNote(note, this.settings().longNoteStrategy);
         if (prepared.excerpt) this.excerpts.set(path, prepared.excerpt); else this.excerpts.delete(path);
         this.events.emit();
@@ -159,19 +159,15 @@ export class ObsidianOrganizer implements OrganizerController {
       else { this.removeProfilesUnder(file.path); this.vault.removeUnder(file.path); for (const entry of this.queue.entries()) if (within(entry.path, file.path)) this.queue.remove(entry.path); this.refreshFolders(); }
       this.invalidateLinks();
     }));
-    this.plugin.registerEvent(workspace.on('file-open', file => { if (!file) return; this.activePath = file.path; this.analyzeOpened(file.path); this.events.emit(); }));
+    this.plugin.registerEvent(workspace.on('file-open', file => { this.activePath = file?.path ?? null; if (file) this.analyzeOpened(file.path); this.events.emit(); }));
     this.activePath = workspace.getActiveFile()?.path ?? null;
     void this.buildIndex();
   }
-  private readonly opened = new Set<string>();
-  /** Opening an inbox note without a suggestion is an explicit request for that note only, once per content version. */
+  /** The opening editor may still hold the previous note; read the selected file for this request. */
   private analyzeOpened(path: string): void {
     const settings = this.settings(), entry = this.queue.entries().find(item => item.path === path);
     if (!settings.analyzeOnOpen || !settings.autoFiling || !this.enabled() || !this.vault.eligible(path) || entry?.status !== 'waiting' || entry.proposal) return;
-    const key = path + '\u0000' + this.vault.revision(path);
-    if (this.opened.has(key)) return;
-    this.opened.add(key); if (this.opened.size > 512) this.opened.delete(this.opened.values().next().value!);
-    this.analyzeNote(path);
+    this.excerpts.delete(path); this.queue.analyze(path, 'saved');
   }
   private readonly profilePaths = new Set<string>();
   private metadata(file: TFile): void {
